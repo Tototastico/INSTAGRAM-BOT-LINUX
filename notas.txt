@@ -1,0 +1,80 @@
+Las cuentas deben estar semi-warm (no recién creadas o inactivas).
+
+📦 Módulos a desarrollar
+1. main.py – Script principal
+Lee configuración desde un JSON.
+
+Ejecuta el flujo de comentarios con una cuenta.
+
+2. config.json – Archivo de configuración
+URL del post a comentar.
+
+Comentario base o plantilla.
+
+Delay entre ejecuciones (simulación de humano).
+
+Perfil del navegador (ruta a la sesión guardada de Chrome).
+
+Ejemplo:
+
+json
+Copiar
+Editar
+{
+  "url_post": "https://www.instagram.com/p/XXXXXXX/",
+  "comentario": "¡Participando! 🙌 @amigo1 @amigo2",
+  "delay_entre_comentarios": [10, 25],
+  "perfil_chrome": "accounts/cuenta1"
+}
+3. comentarios.py – Generador de comentarios
+Función que retorna un comentario aleatorio, usando una lista de frases y etiquetas.
+
+Evita repetir siempre el mismo texto.
+
+4. selenium_runner.py – Automatizador con Selenium
+Abre Chrome con el perfil del usuario (--user-data-dir).
+
+Navega al link del post.
+
+Espera un tiempo random.
+
+Escribe y publica el comentario como si fuera humano (simula tipeo).
+
+Cierra la sesión.
+
+5. utils.py – Funciones auxiliares
+Delay aleatorio entre acciones.
+
+Logger básico con timestamps.
+
+⚙️ Herramientas y dependencias necesarias
+selenium
+
+undetected-chromedriver
+
+time, random, json, os, logging
+
+🚀 Flujo del bot (resumen)
+Iniciás sesión manual en Instagram (una sola vez) con Chrome --user-data-dir.
+
+Guardás ese perfil en una carpeta (accounts/cuenta1).
+
+El bot usa ese perfil para abrir Instagram ya logueado.
+
+Navega al post y comenta.
+
+Espera un rato random y termina.
+
+🛠️ Próximos pasos luego de la versión básica (fase 2+)
+Agregar múltiples cuentas (rotación).
+
+GUI integrada con el script.
+
+Variaciones más avanzadas del comentario.
+
+Proxy support (IP rotator).
+
+Scheduler (comentar cada X tiempo).
+
+Manejo de errores / bloqueos.
+
