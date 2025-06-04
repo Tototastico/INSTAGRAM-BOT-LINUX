@@ -1,7 +1,6 @@
 import random
 
-def generar_comentario(base):
-    # Podés extender esto con plantillas más complejas si querés
+def generar_comentario(etiquetas_base, cantidad=1):
     variaciones = [
         "¡Participando! 🙌 {tags}",
         "Vamos por ese premio 🔥 {tags}",
@@ -10,8 +9,9 @@ def generar_comentario(base):
         "¡Allá vamos! 💪 {tags}"
     ]
 
-    etiquetas = ["@amigo1", "@amigo2", "@amigo3", "@amigo4", "@amigo5"]
-    seleccionados = random.sample(etiquetas, 2)
+    if cantidad > len(etiquetas_base):
+        cantidad = len(etiquetas_base)
+    seleccionados = random.sample(etiquetas_base, cantidad)
     tags = " ".join(seleccionados)
 
     plantilla = random.choice(variaciones)

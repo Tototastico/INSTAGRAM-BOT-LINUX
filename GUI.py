@@ -25,7 +25,7 @@ class SorteoInstagramGUI(QWidget):
         layout.addWidget(QLabel("Seleccioná tus cuentas de Instagram:"))
         self.account_list = QListWidget()
         self.account_list.setSelectionMode(QAbstractItemView.MultiSelection)
-        cuentas = [f"Cuenta{i+1}" for i in range(10)]
+        cuentas = ["@tototastico"]
         for cuenta in cuentas:
             item = QListWidgetItem(cuenta)
             self.account_list.addItem(item)
@@ -74,7 +74,7 @@ class SorteoInstagramGUI(QWidget):
     #import json
 
     def mostrar_config(self):
-        cuentas_seleccionadas = [f"accounts/{item.text()}" for item in self.account_list.selectedItems()]
+        cuentas_seleccionadas = [f"{item.text()[1:]}" for item in self.account_list.selectedItems()]
         link = self.link_input.text()
         cantidad_etiquetas = self.tags_spin.value()
         texto_complementario = self.text_input.toPlainText()

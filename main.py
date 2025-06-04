@@ -1,36 +1,50 @@
 import json
+import threading
 import time
+from datetime import datetime, timedelta
 from selenium_runner import comentar_en_post
 from comentarios import generar_comentario
-from utils import delay_aleatorio
 
-# Cargar configuracion
-def cargar_config(path="config.json"):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def worker(url_post, perfil_chrome, cantidad_etiquetas, comentarios_min, tiempo_min, etiquetas_base, comentario_add):
+    intervalo_seg = 60 / comentarios_min
+    fin = datetime.now() + timedelta(minutes=tiempo_min)
 
-def guardar_config(config, path="config.json"):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    while datetime.now() < fin:
+        # Generar comentario con etiquetas
+        comentario = generar_comentario(etiquetas_base=etiquetas_base, cantidad=cantidad_etiquetas)
+        print(f"[{perfil_chrome}] Comentando: {comentario}")
 
-def ejecutar_bot():
-    config = cargar_config()
+        try:
+            comentar_en_post(url_post, comentario, perfil_chrome)
+        except Exception as e:
+            print(f"[{perfil_chrome}] Error: {e}")
+
+        time.sleep(intervalo_seg)
+
+    print(f"[{perfil_chrome}] Terminó participación.")
+
+def main():
+    with open("config.json", "r", encoding="utf-8") as f:
+        config = json.load(f)
 
     url_post = config["url_post"]
-    comentario_base = config["comentario"]
-    delay_rango = config["delay_entre_comentarios"]
-    perfil_chrome = config["perfil_chrome"]
+    perfiles = config["perfil_chrome"]
+    cantidad_etiquetas = config.get("etiquetas", 2)
+    tiempo_min = config.get("exe_time", 60)
+    comentarios_min = config.get("comentarios_min", 10)
+    etiquetas_base = ["@camifernandl", "@tototastico", "@camisulii", "@soyteoo", "@tobi.sirne"]
+    comentario_add = config["comentario"]
+    threads = []
+    for perfil in perfiles:
+        t = threading.Thread(target=worker, args=(url_post, perfil, cantidad_etiquetas, comentarios_min, tiempo_min, etiquetas_base, comentario_add))
+        t.start()
+        threads.append(t)
 
-    # Generar comentario final (puede incluir variaciones en el futuro)
-    comentario_final = generar_comentario(comentario_base)
+    for t in threads:
+        t.join()
 
-    # Ejecutar comentario
-    comentar_en_post(url_post, comentario_final, perfil_chrome)
-
-    # Esperar un tiempo aleatorio (como si fuese un humano)
-    delay_aleatorio(*delay_rango)
-
-    print("\n[✔] Comentario publicado exitosamente.")
+    print("Participación finalizada para todas las cuentas.")
+    input("Presioná Enter para detener el programa...\n")
 
 if __name__ == "__main__":
-    ejecutar_bot()
+    main()
