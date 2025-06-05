@@ -78,3 +78,10 @@ Scheduler (comentar cada X tiempo).
 
 Manejo de errores / bloqueos.
 
+
+
+def comentar_en_post(url_post, comentario, nombre_cuenta):
+    print(f"[+] Iniciando sesión con la cuenta: {nombre_cuenta}")
+    
+    driver = crear_driver(nombre_cuenta)
+    driver.get(url_post)

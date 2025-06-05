@@ -1,5 +1,6 @@
 import random
 
+
 def generar_comentario(etiquetas_base, cantidad=1):
     variaciones = [
         "¡Participando! 🙌 {tags}",

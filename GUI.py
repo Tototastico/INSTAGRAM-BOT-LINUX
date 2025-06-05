@@ -5,7 +5,6 @@ from PyQt5.QtWidgets import (
     QSpinBox, QTextEdit, QListWidget, QListWidgetItem, QAbstractItemView
 )
 
-
 class SorteoInstagramGUI(QWidget):
     def __init__(self):
         super().__init__()
@@ -59,7 +58,6 @@ class SorteoInstagramGUI(QWidget):
         self.start_button = QPushButton("Iniciar participación")
         self.start_button.clicked.connect(self.mostrar_config)
         layout.addWidget(self.start_button)
-
         self.setLayout(layout)
 
     #def mostrar_config(self):
@@ -100,7 +98,6 @@ class SorteoInstagramGUI(QWidget):
 
         print("Configuración guardada en config.json")
         print(config)
-
 
 
 if __name__ == "__main__":
