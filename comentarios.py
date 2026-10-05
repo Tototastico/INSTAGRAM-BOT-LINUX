@@ -3,11 +3,11 @@ import random
 
 def generar_comentario(etiquetas_base, cantidad=1):
     variaciones = [
-        "¡Participando! 🙌 {tags}",
-        "Vamos por ese premio 🔥 {tags}",
+        "🙌 {tags}",
+        "🔥 {tags}",
         "Espero ganar 🤞 {tags}",
-        "Suerte para mí 😄 {tags}",
-        "¡Allá vamos! 💪 {tags}"
+        "Suerteee 😄 {tags}",
+        "💪 {tags}"
     ]
 
     if cantidad > len(etiquetas_base):

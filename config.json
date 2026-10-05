@@ -1,10 +1,8 @@
 {
-  "url_post": "https://www.instagram.com/p/BdsMRGhDojV/",
+  "url_post": "https://www.instagram.com/p/DeASwhsFjiV/",
   "comentario": "",
-  "perfil_chrome": [
-    "tototastico"
-  ],
-  "etiquetas": 4,
-  "exe_time": 5,
+  "perfil_chrome": ["accounts/cuenta1"],
+  "etiquetas": 3,
+  "exe_time": 10,
   "comentarios_min": 2
 }

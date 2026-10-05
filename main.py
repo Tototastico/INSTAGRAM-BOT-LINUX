@@ -38,7 +38,7 @@ def main():
     cantidad_etiquetas = config.get("etiquetas", 2)
     tiempo_min = config.get("exe_time", 60)
     comentarios_min = config.get("comentarios_min", 10)
-    etiquetas_base = ["@camifernandl", "@tototastico", "@camisuliii", "@soyteoo", "@tobi.sirne"]
+    etiquetas_base = ["@camifernandl", "@karinasilvetti1", "@camisuliii", "@soyteoo", "@tobi.sirne", "@nailsconkary", "@camiiiythiago"]
     comentario_add = config["comentario"]
     threads = []
     for perfil in perfiles:
