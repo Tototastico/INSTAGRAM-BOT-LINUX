@@ -24,32 +24,32 @@
   - Cierre ordenado con `lifespan` en FastAPI (`webapp/api.py`), rechazando nuevas tareas y liberando el bloqueo de proceso.
   - `Coordinator.shutdown(timeout_seconds=15)` con drenado de hilos, marcado seguro en base de datos (`interrupted`) y cierre forzado de navegadores Selenium (`runner.close()`).
 - [x] **Fase 4 — Base de Datos**
-  - Scripts en `database/scripts/`:
-    - `backup_sqlite.py`: Respaldo atómico consistente con SQLite Online Backup API.
-    - `validate_database.py`: Comprobación exhaustiva de integridad, quick check, foreign keys y esquemas.
-    - `restore_sqlite.py`: Restauración segura con validación bidireccional y copia preventiva.
-    - `migrate_paths.py`: Migración transaccional de rutas con vista previa, respaldo previo, comprobación de colisiones e idempotencia.
-    - `init_database.py`: Creación limpia de bases de datos desde cero.
-  - Documentación en `database/README.md`.
-- [ ] **Fase 5 — Despliegue Automatizado VPS**
-  - Archivos en `deploy/linux/`: `install.sh`, `deploy.sh`, `update.sh`, `rollback.sh`, `backup.sh`, `healthcheck.sh`, `env.example`.
-  - Unidades systemd: `instagram-bot.service`, `instagram-bot-display.service` (Xvfb).
-  - Separación de dependencias `requirements-server.txt` sin PyQt5.
+  - Scripts en `database/scripts/`: `backup_sqlite.py`, `validate_database.py`, `restore_sqlite.py`, `migrate_paths.py`, `init_database.py`.
+  - Soporte de instalacion nueva y migracion segura Windows -> Linux.
+- [x] **Fase 5 — Despliegue Automatizado VPS**
+  - Dependencias de servidor `requirements-server.txt` sin PyQt5.
+  - Configuración de entorno `deploy/linux/env.example`.
+  - Unidades systemd: `instagram-bot.service` y `instagram-bot-display.service` (Xvfb).
+  - Scripts bash completos: `install.sh`, `deploy.sh`, `update.sh`, `rollback.sh`, `backup.sh`, `healthcheck.sh`.
 - [ ] **Fase 6 — Validaciones y Pruebas**
-  - Tests unitarios y de integracion automatizados.
+  - Tests unitarios y de integración para rutas, Chrome detection, DB backup/restore/migration, lock y lifespan.
 - [ ] **Fase 7 — Documentacion Final**
-  - Manuales tecnicos y guias paso a paso.
+  - Guías detalladas en `docs/`.
 
 ---
 
-## Archivos modificados en Fase 4:
-- `database/scripts/backup_sqlite.py` (nuevo)
-- `database/scripts/validate_database.py` (nuevo)
-- `database/scripts/restore_sqlite.py` (nuevo)
-- `database/scripts/migrate_paths.py` (nuevo)
-- `database/scripts/init_database.py` (nuevo)
-- `database/README.md` (nuevo)
+## Archivos modificados en Fase 5:
+- `requirements-server.txt` (nuevo)
+- `deploy/linux/env.example` (nuevo)
+- `deploy/linux/systemd/instagram-bot-display.service` (nuevo)
+- `deploy/linux/systemd/instagram-bot.service` (nuevo)
+- `deploy/linux/install.sh` (nuevo)
+- `deploy/linux/deploy.sh` (nuevo)
+- `deploy/linux/update.sh` (nuevo)
+- `deploy/linux/rollback.sh` (nuevo)
+- `deploy/linux/backup.sh` (nuevo)
+- `deploy/linux/healthcheck.sh` (nuevo)
 - `docs/MIGRATION_PROGRESS.md`
 
 ## Siguiente paso:
-- Iniciar **Fase 5 — Despliegue Automatizado VPS**: generar scripts bash en `deploy/linux/`, unidades systemd, `env.example` y dependencias de servidor `requirements-server.txt`.
+- Iniciar **Fase 6 — Validaciones y Pruebas**: crear suite de tests automatizada para las nuevas capacidades (`tests/test_migration_and_platform.py`).

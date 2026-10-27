@@ -1,0 +1,28 @@
+[Unit]
+Description=Servidor Backend INSTAGRAM-BOT Local
+After=network.target instagram-bot-display.service
+Wants=instagram-bot-display.service
+
+[Service]
+Type=simple
+User=instagram-bot
+Group=instagram-bot
+WorkingDirectory=/opt/instagram-bot/current
+EnvironmentFile=/etc/instagram-bot/instagram-bot.env
+
+# Ejecutar con 1 solo worker para garantizar exclusión y single-coordinator
+ExecStart=/opt/instagram-bot/venv/bin/python -m uvicorn webapp.api:app --host 127.0.0.1 --port 8000 --workers 1
+
+# Cierre ordenado: concede tiempo al lifespan de FastAPI para cerrar navegadores y drenar tareas
+TimeoutStopSec=25
+KillSignal=SIGTERM
+Restart=always
+RestartSec=5
+
+# Restricciones de seguridad del sistema
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/instagram-bot /tmp
+
+[Install]
+WantedBy=multi-user.target
