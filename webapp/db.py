@@ -1,19 +1,13 @@
 import json
-import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .paths import get_accounts_dir, get_db_path, resolve_profile_path
 
 ROOT = Path(__file__).resolve().parents[1]
-
-ACCOUNTS_ROOT = Path(
-    os.environ.get(
-        "INSTAGRAM_ACCOUNTS_DIR",
-        str(ROOT / "accounts")
-    )
-).resolve()
+ACCOUNTS_ROOT = get_accounts_dir()
 LEGACY_PROFILE_ROOT = ACCOUNTS_ROOT
 LEGACY_TAGS = [
     '@camifernandl', '@karinasilvetti1', '@camisuliii', '@soyteoo',
@@ -26,25 +20,12 @@ def now():
 
 
 def profile_path(profile_arg):
-    path = Path(profile_arg.replace("\\", "/"))
-
-    if path.is_absolute() or ".." in path.parts or not path.parts:
-        raise ValueError("Ruta de perfil inválida")
-
-    parts = list(path.parts)
-
-    if parts[0].lower() == "accounts":
-        parts = parts[1:]
-
-    if len(parts) != 1 or parts[0] in ("", "."):
-        raise ValueError("Usá un nombre de perfil, por ejemplo cuenta1")
-
-    return str((ACCOUNTS_ROOT / parts[0]).resolve()).lower()
+    return resolve_profile_path(profile_arg, get_accounts_dir())
 
 
 class Database:
     def __init__(self, path=None, legacy_config=None, initialize=True):
-        self.path = Path(path or ROOT / 'data' / 'bot.sqlite3')
+        self.path = Path(path or get_db_path())
         self.legacy_config = Path(legacy_config or ROOT / 'config.json')
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if initialize:

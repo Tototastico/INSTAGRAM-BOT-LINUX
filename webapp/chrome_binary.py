@@ -1,5 +1,9 @@
 import ctypes
 import os
+import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import undetected_chromedriver as uc
@@ -17,12 +21,7 @@ class _FileVersionInfo(ctypes.Structure):
     ]
 
 
-def chrome_binary_and_major():
-    candidate = os.environ.get('INSTAGRAM_BOT_CHROME_BINARY') or uc.find_chrome_executable()
-    if not candidate or not Path(candidate).is_file():
-        raise RuntimeError('No se encontro chrome.exe. Define INSTAGRAM_BOT_CHROME_BINARY con su ruta completa.')
-
-    executable = str(Path(candidate).resolve())
+def _chrome_version_windows(executable: str) -> int:
     version_api = ctypes.WinDLL('version', use_last_error=True)
     version_api.GetFileVersionInfoSizeW.argtypes = [ctypes.c_wchar_p, ctypes.c_void_p]
     version_api.GetFileVersionInfoSizeW.restype = ctypes.c_uint32
@@ -47,4 +46,69 @@ def chrome_binary_and_major():
     major = info.file_version_ms >> 16
     if major <= 0:
         raise RuntimeError(f'Version principal de Chrome invalida: {executable}')
+    return major
+
+
+def _chrome_version_linux(executable: str) -> int:
+    try:
+        proc = subprocess.run(
+            [executable, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        output = proc.stdout.strip() or proc.stderr.strip()
+    except Exception as exc:
+        raise RuntimeError(f'No se pudo ejecutar {executable} --version: {exc}')
+
+    match = re.search(r'(\d+)\.\d+\.\d+\.\d+', output)
+    if not match:
+        raise RuntimeError(f'No se pudo extraer la versión de Chrome desde la salida: {output}')
+    return int(match.group(1))
+
+
+def find_linux_chrome() -> str | None:
+    # Búsqueda en rutas conocidas de Ubuntu / Debian
+    candidates = [
+        os.environ.get('INSTAGRAM_BOT_CHROME_BINARY'),
+        shutil.which('google-chrome-stable'),
+        shutil.which('google-chrome'),
+        shutil.which('chromium-browser'),
+        shutil.which('chromium'),
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+    ]
+    for c in candidates:
+        if c and Path(c).is_file() and os.access(c, os.X_OK):
+            return str(Path(c).resolve())
+    return None
+
+
+def chrome_binary_and_major():
+    override = os.environ.get('INSTAGRAM_BOT_CHROME_BINARY')
+    candidate = None
+
+    if override:
+        if not Path(override).is_file():
+            raise RuntimeError(f'El ejecutable configurado en INSTAGRAM_BOT_CHROME_BINARY no existe: {override}')
+        candidate = override
+    elif sys.platform == 'win32':
+        candidate = uc.find_chrome_executable()
+    else:
+        candidate = find_linux_chrome() or uc.find_chrome_executable()
+
+    if not candidate or not Path(candidate).is_file():
+        raise RuntimeError('No se encontro chrome. Define INSTAGRAM_BOT_CHROME_BINARY con su ruta completa.')
+
+    executable = str(Path(candidate).resolve())
+
+    if sys.platform == 'win32':
+        major = _chrome_version_windows(executable)
+    else:
+        major = _chrome_version_linux(executable)
+
     return executable, major

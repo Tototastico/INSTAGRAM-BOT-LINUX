@@ -1,26 +1,49 @@
-import undetected_chromedriver as uc
+import os
+import random
+import sys
+import time
+from pathlib import Path
+
+from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-import time
-import random
-from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException
-from selenium.webdriver.common.action_chains import ActionChains
+import undetected_chromedriver as uc
+
 from webapp.chrome_binary import chrome_binary_and_major
+from webapp.paths import resolve_profile_path
+
 
 def crear_driver(nombre_cuenta):
     chrome_executable, chrome_major = chrome_binary_and_major()
     options = uc.ChromeOptions()
-    perfil_path = f"E:/tobias/INSTAGRAM-BOT/accounts/{nombre_cuenta}"
+    perfil_path = resolve_profile_path(nombre_cuenta)
+    Path(perfil_path).mkdir(parents=True, exist_ok=True)
+
     options.add_argument(f"--user-data-dir={perfil_path}")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--start-maximized")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
 
-    driver = uc.Chrome(options=options, browser_executable_path=chrome_executable, version_main=chrome_major)
+    # En Linux, ejecutar con sandbox estándar si no es root;
+    # si se ejecuta bajo root (desaconsejado), se requiere --no-sandbox
+    if sys.platform != "win32":
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1366,768")
+    else:
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+
+    driver = uc.Chrome(
+        options=options,
+        browser_executable_path=chrome_executable,
+        version_main=chrome_major
+    )
     return driver
+
 
 def acceder_caja(url_post, nombre_cuenta):
     print(f"[+] Iniciando sesión con la cuenta: {nombre_cuenta}")
@@ -60,9 +83,6 @@ def acceder_caja(url_post, nombre_cuenta):
     except Exception as e:
         print("[!] Error al comentar:", e)
         return False, driver, None
-    #finally:
-    #    time.sleep(random.uniform(4, 6))
-    #    driver.quit()
 
 
 def comentar_en_post(comentario, driver, textarea):
@@ -72,11 +92,10 @@ def comentar_en_post(comentario, driver, textarea):
         time.sleep(random.uniform(0.05, 0.15))
 
     time.sleep(random.uniform(1, 2))
-    # Buscar el botón "Publicar"
     publicar_btn = wait.until(EC.element_to_be_clickable(
         (By.XPATH, '//div[@role="button" and text()="Publicar"]')
     ))
     driver.execute_script("arguments[0].scrollIntoView(true);", publicar_btn)
     time.sleep(0.5)
     driver.execute_script("arguments[0].click();", publicar_btn)
-    print("[✓] Comentario enviado correctamente.")
+    print("[+] Comentario enviado correctamente.")
