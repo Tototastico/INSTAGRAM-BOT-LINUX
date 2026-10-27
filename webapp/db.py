@@ -43,11 +43,12 @@ def profile_path(profile_arg):
 
 
 class Database:
-    def __init__(self, path=None, legacy_config=None):
+    def __init__(self, path=None, legacy_config=None, initialize=True):
         self.path = Path(path or ROOT / 'data' / 'bot.sqlite3')
         self.legacy_config = Path(legacy_config or ROOT / 'config.json')
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.initialize()
+        if initialize:
+            self.initialize()
 
     @contextmanager
     def connect(self):
@@ -71,7 +72,9 @@ class Database:
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS accounts (
                     id INTEGER PRIMARY KEY, name TEXT NOT NULL, profile_arg TEXT NOT NULL,
-                    profile_path TEXT NOT NULL UNIQUE, archived INTEGER NOT NULL DEFAULT 0
+                    profile_path TEXT NOT NULL UNIQUE, archived INTEGER NOT NULL DEFAULT 0,
+                    attention_required INTEGER NOT NULL DEFAULT 0,
+                    attention_reason TEXT
                 );
                 CREATE TABLE IF NOT EXISTS draws (
                     id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
@@ -99,11 +102,19 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, id DESC);
             ''')
+            columns = {item['name'] for item in con.execute('PRAGMA table_info(accounts)')}
+            if 'attention_required' not in columns:
+                con.execute('ALTER TABLE accounts ADD COLUMN attention_required INTEGER NOT NULL DEFAULT 0')
+            if 'attention_reason' not in columns:
+                con.execute('ALTER TABLE accounts ADD COLUMN attention_reason TEXT')
+            self._import_legacy(con)
+
+    def recover_interrupted(self):
+        with self.connect() as con:
             con.execute("UPDATE tasks SET status='interrupted', updated_at=? WHERE status IN ('running', 'queued', 'pausing', 'cancelling')", (now(),))
             for row in con.execute("SELECT id FROM tasks WHERE status='interrupted' AND id NOT IN (SELECT task_id FROM events WHERE kind='interrupted')"):
                 con.execute('INSERT INTO events(task_id,kind,message,created_at) VALUES(?,?,?,?)',
                             (row['id'], 'interrupted', 'Ejecucion interrumpida; requiere reanudacion manual', now()))
-            self._import_legacy(con)
 
     def _import_legacy(self, con):
         if con.execute("SELECT 1 FROM meta WHERE key='legacy_imported'").fetchone():

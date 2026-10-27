@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import threading
 import time
 import types
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 from webapp.api import make_app
 from webapp.coordinator import Coordinator
 from webapp.db import Database, LEGACY_PROFILE_ROOT, LEGACY_TAGS, row
-from webapp.runner import SeleniumRunner, compose_comment
+from webapp.runner import PendingCommentError, SeleniumRunner, compose_comment
 
 
 def wait_for(predicate, timeout=3):
@@ -43,6 +44,22 @@ def test_legacy_import_once_preserves_profile_and_config(tmp_path):
     assert config.read_text(encoding='utf-8') == content
 
 
+def test_existing_accounts_table_gains_attention_columns(tmp_path):
+    path = tmp_path / 'bot.sqlite3'
+    with sqlite3.connect(path) as con:
+        con.execute('''CREATE TABLE accounts (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL, profile_arg TEXT NOT NULL,
+            profile_path TEXT NOT NULL UNIQUE, archived INTEGER NOT NULL DEFAULT 0
+        )''')
+        con.execute("INSERT INTO accounts(name,profile_arg,profile_path) VALUES('A','a','a')")
+    db = Database(path, tmp_path / 'missing.json')
+    with db.connect() as con:
+        account = row(con, 'SELECT * FROM accounts WHERE id=1')
+    assert account['name'] == 'A'
+    assert account['attention_required'] == 0
+    assert account['attention_reason'] is None
+
+
 def test_crud_and_archive(tmp_path):
     app = make_app(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
     with TestClient(app) as client:
@@ -73,7 +90,7 @@ def test_runner_adapter_keeps_legacy_call_order(monkeypatch):
         page_source='<script>var captchaConfig = {};</script>',
         quit=lambda: calls.append(('quit',)),
     )
-    textarea = object()
+    textarea = types.SimpleNamespace(get_dom_property=lambda name: '')
     fake_module = types.SimpleNamespace(
         acceder_caja=lambda url, profile: (calls.append(('open', url, profile)) or (True, driver, textarea)),
         comentar_en_post=lambda comment, used_driver, used_textarea: calls.append(
@@ -90,6 +107,22 @@ def test_runner_adapter_keeps_legacy_call_order(monkeypatch):
     ]
     text = compose_comment(LEGACY_TAGS, 1, '')
     assert any(tag in text for tag in LEGACY_TAGS)
+
+
+def test_pending_text_prevents_typing_or_publishing(monkeypatch):
+    calls = []
+    textarea = types.SimpleNamespace(get_dom_property=lambda name: 'comentario anterior')
+    driver = types.SimpleNamespace(current_url='https://www.instagram.com/p/ABC/', quit=lambda: None)
+    monkeypatch.setitem(sys.modules, 'selenium_runner', types.SimpleNamespace(
+        acceder_caja=lambda url, profile: (True, driver, textarea),
+        comentar_en_post=lambda *args: calls.append(args),
+    ))
+    runner = SeleniumRunner()
+    runner.open('https://www.instagram.com/p/ABC/', 'cuenta1')
+    with pytest.raises(PendingCommentError, match='conserva texto'):
+        runner.post('nuevo comentario')
+    assert calls == []
+    runner.close()
 
 
 def test_runner_stops_on_actual_challenge_url(monkeypatch):
@@ -113,7 +146,10 @@ def test_recovery_requires_manual_resume(tmp_path):
         s = con.execute('''INSERT INTO assignments(account_id,draw_id,duration_minutes,comments_per_minute,tag_count,tags_json)
             VALUES(?,?,?,?,?,?)''', (a, d, 1, 1, 1, '["@amigo"]')).lastrowid
         task_id = con.execute("INSERT INTO tasks(assignment_id,status,created_at,updated_at) VALUES(?,'running','x','x')", (s,)).lastrowid
-    Database(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
+    restarted = Database(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
+    with db.connect() as con:
+        assert row(con, 'SELECT status FROM tasks WHERE id=?', (task_id,))['status'] == 'running'
+    restarted.recover_interrupted()
     with db.connect() as con:
         assert row(con, 'SELECT status FROM tasks WHERE id=?', (task_id,))['status'] == 'interrupted'
         assert row(con, 'SELECT kind FROM events WHERE task_id=?', (task_id,))['kind'] == 'interrupted'
@@ -255,3 +291,67 @@ def test_duration_and_frequency_repeat_without_extra_post(tmp_path):
     with db.connect() as con:
         task = row(con, 'SELECT * FROM tasks WHERE id=?', (task_id,))
         assert (task['status'], task['attempts'], task['clicked'], task['confirmed']) == ('completed', 2, 2, 0)
+
+
+def test_pending_comment_pauses_account_and_queued_tasks(tmp_path):
+    db = Database(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
+    with db.connect() as con:
+        a = con.execute("INSERT INTO accounts(name,profile_arg,profile_path) VALUES('A','a','a')").lastrowid
+        assignment_ids = []
+        for index in (1, 2):
+            d = con.execute('INSERT INTO draws(name,url) VALUES(?,?)',
+                            (f'D{index}', f'https://www.instagram.com/p/{index}/')).lastrowid
+            assignment_ids.append(con.execute('''INSERT INTO assignments
+                (account_id,draw_id,duration_minutes,comments_per_minute,tag_count,tags_json)
+                VALUES(?,?,?,?,?,?)''', (a, d, 1, 2, 1, '["@amigo"]')).lastrowid)
+
+    first_post = threading.Event()
+    release = threading.Event()
+    fake_time = [0.0]
+    posted = []
+    closed = []
+
+    class FakeRunner:
+        def open(self, url, profile):
+            pass
+
+        def post(self, comment):
+            if not posted:
+                posted.append(comment)
+                first_post.set()
+                release.wait(2)
+            else:
+                raise PendingCommentError('La caja de comentarios conserva texto; posible bloqueo')
+
+        def close(self):
+            closed.append(True)
+
+    coordinator = Coordinator(db, FakeRunner, clock=lambda: fake_time[0],
+                              sleep=lambda seconds: fake_time.__setitem__(0, fake_time[0] + seconds))
+    first = coordinator.create(assignment_ids[0])
+    assert first_post.wait(2)
+    second = coordinator.create(assignment_ids[1])
+    release.set()
+    wait_for(lambda: not coordinator.threads)
+
+    with db.connect() as con:
+        account = row(con, 'SELECT * FROM accounts WHERE id=?', (a,))
+        current = row(con, 'SELECT * FROM tasks WHERE id=?', (first,))
+        queued = row(con, 'SELECT * FROM tasks WHERE id=?', (second,))
+        event = row(con, "SELECT kind FROM events WHERE task_id=? AND kind='blocked_suspected'", (first,))
+    assert account['attention_required'] == 1
+    assert current['status'] == queued['status'] == 'paused'
+    assert (current['attempts'], current['clicked'], current['failures']) == (2, 1, 0)
+    assert queued['attempts'] == 0
+    assert event['kind'] == 'blocked_suspected'
+    assert len(posted) == 1 and closed == [True]
+    with pytest.raises(ValueError, match='requiere revision'):
+        coordinator.control(first, 'resume')
+    with pytest.raises(ValueError, match='requiere revision'):
+        coordinator.create(assignment_ids[1])
+
+    app = make_app(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
+    with TestClient(app) as client:
+        cleared = client.post(f'/api/accounts/{a}/clear-attention')
+        assert cleared.status_code == 200
+        assert cleared.json()['attention_required'] == 0

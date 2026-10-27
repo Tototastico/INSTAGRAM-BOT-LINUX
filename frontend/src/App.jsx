@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Activity, Archive, Check, ChevronRight, CircleAlert, CircleCheck, Clock3,
+  Activity, Archive, Bell, Check, ChevronRight, CircleAlert, CircleCheck, Clock3,
   Edit3, LayoutDashboard, Link2, ListTodo, Pause, Play, Plus, RefreshCw,
   Search, Square, Users, X,
 } from 'lucide-react'
@@ -23,6 +23,7 @@ const eventLabels = {
   pausing: 'Pausa solicitada', cancelling: 'Cancelacion solicitada',
   cancelled: 'Cancelada', completed: 'Completada', interrupted: 'Interrumpida',
   close_error: 'Error al cerrar Chrome',
+  blocked_suspected: 'Posible bloqueo',
 }
 
 async function request(path, options = {}) {
@@ -64,11 +65,27 @@ function App() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [selectedTask, setSelectedTask] = useState(null)
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    () => typeof Notification !== 'undefined' && Notification.permission === 'granted'
+  )
+  const lastEventId = useRef(null)
 
   const refresh = useCallback(async () => {
     try {
       const keys = ['overview', 'accounts', 'draws', 'assignments', 'tasks', 'events']
       const values = await Promise.all(keys.map(key => request(`/${key}`)))
+      const latestId = values[5][0]?.id || 0
+      if (lastEventId.current !== null && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        for (const event of values[5].filter(x => x.id > lastEventId.current && x.kind === 'blocked_suspected')) {
+          const task = values[4].find(x => x.id === event.task_id)
+          try {
+            new Notification('Posible bloqueo de Instagram', {
+              body: `${task?.account_name || 'Cuenta'}: ${event.message}`,
+            })
+          } catch { /* El aviso persistente sigue visible en el panel. */ }
+        }
+      }
+      lastEventId.current = Math.max(lastEventId.current || 0, latestId)
       setData(Object.fromEntries(keys.map((key, index) => [key, values[index]])))
     } catch (err) { setError(err.message) }
   }, [])
@@ -78,6 +95,16 @@ function App() {
     const timer = setInterval(refresh, 2500)
     return () => clearInterval(timer)
   }, [refresh])
+
+  async function enableNotifications() {
+    if (typeof Notification === 'undefined') {
+      setError('Este navegador no admite notificaciones')
+      return
+    }
+    const permission = await Notification.requestPermission()
+    setNotificationsEnabled(permission === 'granted')
+    if (permission !== 'granted') setError('Las notificaciones del navegador no estan habilitadas')
+  }
 
   function openModal(type, item = null) {
     const base = type === 'accounts' ? emptyAccount : type === 'draws' ? emptyDraw : emptyAssignment
@@ -112,7 +139,8 @@ function App() {
 
   const activeAccounts = data.accounts.filter(x => !x.archived)
   const activeDraws = data.draws.filter(x => !x.archived)
-  const activeAssignments = data.assignments.filter(x => !x.archived && activeAccounts.some(a => a.id === x.account_id) && activeDraws.some(d => d.id === x.draw_id))
+  const activeAssignments = data.assignments.filter(x => !x.archived && activeAccounts.some(a => a.id === x.account_id && !a.attention_required) && activeDraws.some(d => d.id === x.draw_id))
+  const attentionAccounts = activeAccounts.filter(x => x.attention_required)
   const match = text => String(text).toLowerCase().includes(filter.toLowerCase())
   const task = data.tasks.find(x => x.id === selectedTask) || data.tasks[0]
 
@@ -127,9 +155,10 @@ function App() {
     </aside>
 
     <main className="content">
-      <header className="topbar"><div className="breadcrumb">Panel <ChevronRight size={14} /> <strong>{nav.find(x => x[0] === view)?.[2]}</strong></div><div className="top-actions"><span className="local-badge">127.0.0.1</span><IconButton icon={RefreshCw} title="Actualizar datos" onClick={refresh} /></div></header>
+      <header className="topbar"><div className="breadcrumb">Panel <ChevronRight size={14} /> <strong>{nav.find(x => x[0] === view)?.[2]}</strong></div><div className="top-actions"><span className="local-badge">127.0.0.1</span><IconButton icon={Bell} title={notificationsEnabled ? 'Notificaciones activas' : 'Activar notificaciones'} onClick={enableNotifications} tone={notificationsEnabled ? 'accent-icon' : ''} /><IconButton icon={RefreshCw} title="Actualizar datos" onClick={refresh} /></div></header>
       <div className="page">
         {error && <div className="error-banner"><CircleAlert size={17} />{error}<IconButton icon={X} title="Cerrar mensaje" onClick={() => setError('')} /></div>}
+        {attentionAccounts.map(account => <div className="attention-banner" role="alert" key={account.id}><CircleAlert size={19} /><div><strong>{account.name}: posible bloqueo o comentario pendiente</strong><p>{account.attention_reason}</p></div><button className="button secondary" disabled={busy} onClick={() => perform(() => request(`/accounts/${account.id}/clear-attention`, { method: 'POST' }))}><Check size={16} />Marcar revisada</button></div>)}
         {view === 'inicio' && <>
           <div className="page-heading"><div><div className="eyebrow">RESUMEN</div><h1>Vista general</h1><p>Estado de cuentas, sorteos y ejecuciones locales.</p></div></div>
           <div className="metrics">
@@ -146,7 +175,7 @@ function App() {
           <PageHeading title="Cuentas" subtitle="Perfiles de Chrome disponibles para las asignaciones." action="Nueva cuenta" onAction={() => openModal('accounts')} />
           <SearchBox value={filter} onChange={setFilter} />
           <div className="table-wrap"><table><thead><tr><th>Cuenta</th><th>Argumento de perfil</th><th>Ruta efectiva</th><th>Estado</th><th className="actions-col">Acciones</th></tr></thead><tbody>
-            {data.accounts.filter(x => match(`${x.name} ${x.profile_arg}`)).map(item => <tr key={item.id}><td className="primary-cell">{item.name}</td><td><code>{item.profile_arg}</code></td><td className="path-cell" title={item.profile_path}>{item.profile_path}</td><td>{item.archived ? <span className="status">Archivada</span> : <span className="status status-running">Activa</span>}</td><td className="row-actions"><IconButton icon={Edit3} title="Editar cuenta" onClick={() => openModal('accounts', item)} /><IconButton icon={Archive} title="Archivar cuenta" disabled={!!item.archived || busy} onClick={() => perform(() => request(`/accounts/${item.id}/archive`, { method: 'POST' }))} /></td></tr>)}
+            {data.accounts.filter(x => match(`${x.name} ${x.profile_arg}`)).map(item => <tr key={item.id}><td className="primary-cell">{item.name}</td><td><code>{item.profile_arg}</code></td><td className="path-cell" title={item.profile_path}>{item.profile_path}</td><td>{item.archived ? <span className="status">Archivada</span> : item.attention_required ? <span className="status status-interrupted">Revisar</span> : <span className="status status-running">Activa</span>}</td><td className="row-actions"><IconButton icon={Edit3} title="Editar cuenta" onClick={() => openModal('accounts', item)} /><IconButton icon={Archive} title="Archivar cuenta" disabled={!!item.archived || busy} onClick={() => perform(() => request(`/accounts/${item.id}/archive`, { method: 'POST' }))} /></td></tr>)}
           </tbody></table>{data.accounts.length === 0 && <Empty text="Todavia no hay cuentas." />}</div>
         </>}
         {view === 'sorteos' && <>

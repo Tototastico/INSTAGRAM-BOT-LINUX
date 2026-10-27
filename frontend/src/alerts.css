@@ -1,0 +1,24 @@
+.attention-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 15px;
+  margin-bottom: 16px;
+  border: 1px solid #efcfb3;
+  border-left: 3px solid #c5793f;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #8b4d28;
+}
+
+.attention-banner > svg { flex: none; }
+.attention-banner > div { min-width: 0; flex: 1; }
+.attention-banner strong { font-size: 12px; }
+.attention-banner p { margin: 4px 0 0; font-size: 11px; overflow-wrap: anywhere; }
+.attention-banner .button { border-color: #e8cbb5; }
+.event-blocked_suspected { background: #c5793f; }
+
+@media (max-width: 650px) {
+  .attention-banner { align-items: flex-start; flex-wrap: wrap; }
+  .attention-banner .button { margin-left: 31px; }
+}

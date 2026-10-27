@@ -70,11 +70,13 @@ class AssignmentIn(BaseModel):
 
 
 def make_app(db_path=None, legacy_config=None, runner_factory=None):
-    db = Database(db_path, legacy_config)
+    db = Database(db_path, legacy_config, initialize=False)
     coordinator = Coordinator(db, runner_factory) if runner_factory else Coordinator(db)
 
     @asynccontextmanager
     async def lifespan(app):
+        db.initialize()
+        db.recover_interrupted()
         yield
 
     app = FastAPI(title='INSTAGRAM-BOT Local', lifespan=lifespan)
@@ -149,6 +151,13 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None):
             require(con, 'accounts', item_id)
             check_inactive(con, account_id=item_id)
             con.execute('UPDATE accounts SET archived=1 WHERE id=?', (item_id,))
+            return require(con, 'accounts', item_id)
+
+    @app.post('/api/accounts/{item_id}/clear-attention')
+    def clear_account_attention(item_id: int):
+        with db.connect() as con:
+            require(con, 'accounts', item_id)
+            con.execute('UPDATE accounts SET attention_required=0,attention_reason=NULL WHERE id=?', (item_id,))
             return require(con, 'accounts', item_id)
 
     @app.get('/api/draws')

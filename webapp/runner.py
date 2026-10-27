@@ -1,6 +1,10 @@
 from comentarios import generar_comentario
 
 
+class PendingCommentError(RuntimeError):
+    pass
+
+
 def compose_comment(tags, tag_count, extra_text):
     if not tags:
         raise ValueError('La asignacion necesita al menos una etiqueta')
@@ -27,6 +31,11 @@ class SeleniumRunner:
         from selenium_runner import comentar_en_post
 
         self._check_session()
+        pending = self.textarea.get_dom_property('value')
+        if pending is None:
+            pending = self.textarea.get_attribute('value')
+        if pending and pending.strip():
+            raise PendingCommentError('La caja de comentarios conserva texto; posible bloqueo o comentario pendiente')
         comentar_en_post(comment, self.driver, self.textarea)
 
     def _check_session(self):

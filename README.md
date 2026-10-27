@@ -39,6 +39,8 @@ Revisa la cuenta y el sorteo importados antes de iniciar la primera tarea. Crea 
 
 Pausa y cancelacion se aplican entre comentarios, despues de que termine la accion en curso. Una tarea interrumpida por cierre del programa requiere reanudacion manual. El contador **Clics** refleja que Selenium hizo clic en Publicar; **Confirmados** solo contaria una comprobacion independiente, que aun no existe.
 
+Antes de escribir cada comentario, el panel comprueba que el textarea este vacio. Si conserva texto, lo trata como posible bloqueo o comentario pendiente: pausa la tarea y las tareas en cola de esa cuenta, cierra Chrome y muestra un aviso persistente. El icono de campana permite habilitar notificaciones del navegador mientras el panel esta abierto. Revisa la cuenta en Instagram, pulsa **Marcar revisada** y luego reanuda manualmente la tarea; el programa no borra el texto ni reintenta ese comentario por si solo.
+
 No ejecutes `main.py` y el panel al mismo tiempo con el mismo perfil de Chrome. El flujo original permanece disponible como respaldo. Si Chrome muestra login, desafio o CAPTCHA, resuelvelo manualmente. El panel detecta las URL de login y desafio; si la caja de comentarios no aparece, la tarea se detiene con un error.
 
 ## Pruebas

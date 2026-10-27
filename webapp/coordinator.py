@@ -3,7 +3,7 @@ import threading
 import time
 
 from .db import now, row, rows
-from .runner import SeleniumRunner, compose_comment
+from .runner import PendingCommentError, SeleniumRunner, compose_comment
 
 
 ACTIVE = ('queued', 'running', 'pausing', 'cancelling')
@@ -29,11 +29,13 @@ class Coordinator:
 
     def create(self, assignment_id):
         with self.lock, self.db.connect() as con:
-            assignment = row(con, '''SELECT s.id FROM assignments s
+            assignment = row(con, '''SELECT s.id, a.attention_required FROM assignments s
                 JOIN accounts a ON a.id=s.account_id JOIN draws d ON d.id=s.draw_id
                 WHERE s.id=? AND s.archived=0 AND a.archived=0 AND d.archived=0''', (assignment_id,))
             if not assignment:
                 raise ValueError('Asignacion inexistente o archivada')
+            if assignment['attention_required']:
+                raise ValueError('La cuenta requiere revision antes de iniciar otra tarea')
             existing = row(con, f"SELECT id FROM tasks WHERE assignment_id=? AND status IN ({','.join('?' for _ in ACTIVE)})",
                            (assignment_id, *ACTIVE))
             if existing:
@@ -55,6 +57,11 @@ class Coordinator:
             elif action == 'pause' and state == 'queued':
                 self._status(con, task_id, 'paused', 'Tarea pausada en cola')
             elif action == 'resume' and state in ('paused', 'interrupted'):
+                account = row(con, '''SELECT a.attention_required FROM tasks t
+                    JOIN assignments s ON s.id=t.assignment_id
+                    JOIN accounts a ON a.id=s.account_id WHERE t.id=?''', (task_id,))
+                if account['attention_required']:
+                    raise ValueError('La cuenta requiere revision antes de reanudar')
                 self._status(con, task_id, 'queued', 'Reanudacion manual solicitada')
             elif action == 'cancel' and state == 'running':
                 self._status(con, task_id, 'cancelling', 'Cancelacion solicitada')
@@ -68,7 +75,7 @@ class Coordinator:
         with self.lock, self.db.connect() as con:
             candidates = rows(con, '''SELECT t.id, a.profile_path FROM tasks t
                 JOIN assignments s ON s.id=t.assignment_id JOIN accounts a ON a.id=s.account_id
-                WHERE t.status='queued' ORDER BY t.id''')
+                WHERE t.status='queued' AND a.attention_required=0 ORDER BY t.id''')
             for task in candidates:
                 path = task['profile_path']
                 if path in self.active_profiles:
@@ -123,6 +130,9 @@ class Coordinator:
                     self._event(con, task_id, 'attempt', comment)
                 try:
                     runner.post(comment)
+                except PendingCommentError as exc:
+                    self._pause_for_attention(task_id, exc, base_elapsed + self.clock() - segment_start)
+                    break
                 except Exception as exc:
                     self._fail(task_id, exc, base_elapsed + self.clock() - segment_start)
                     break
@@ -155,3 +165,20 @@ class Coordinator:
             con.execute('UPDATE tasks SET elapsed_seconds=?,failures=failures+1,last_error=? WHERE id=?',
                         (max(0, elapsed), message, task_id))
             self._status(con, task_id, 'failed', message)
+
+    def _pause_for_attention(self, task_id, exc, elapsed):
+        message = str(exc)
+        with self.lock, self.db.connect() as con:
+            task = row(con, 'SELECT assignment_id FROM tasks WHERE id=?', (task_id,))
+            assignment = row(con, 'SELECT account_id FROM assignments WHERE id=?', (task['assignment_id'],))
+            account_id = assignment['account_id']
+            con.execute('UPDATE accounts SET attention_required=1,attention_reason=? WHERE id=?',
+                        (message, account_id))
+            con.execute('UPDATE tasks SET elapsed_seconds=?,last_error=? WHERE id=?',
+                        (max(0, elapsed), message, task_id))
+            self._event(con, task_id, 'blocked_suspected', message)
+            self._status(con, task_id, 'paused', 'Pausada: requiere revision de la cuenta')
+            queued = rows(con, '''SELECT t.id FROM tasks t JOIN assignments s ON s.id=t.assignment_id
+                WHERE s.account_id=? AND t.status='queued' ''', (account_id,))
+            for pending in queued:
+                self._status(con, pending['id'], 'paused', 'Pausada: la cuenta requiere revision')
