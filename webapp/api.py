@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .coordinator import ACTIVE, Coordinator
 from .db import Database, LEGACY_TAGS, profile_path, row, rows
+from .instance_lock import SingleInstanceLock
 
 
 class AccountIn(BaseModel):
@@ -69,15 +70,25 @@ class AssignmentIn(BaseModel):
         return value
 
 
-def make_app(db_path=None, legacy_config=None, runner_factory=None):
+def make_app(db_path=None, legacy_config=None, runner_factory=None, enable_instance_lock=True):
     db = Database(db_path, legacy_config, initialize=False)
     coordinator = Coordinator(db, runner_factory) if runner_factory else Coordinator(db)
+    instance_lock = SingleInstanceLock() if enable_instance_lock else None
 
     @asynccontextmanager
     async def lifespan(app):
-        db.initialize()
-        db.recover_interrupted()
-        yield
+        if instance_lock:
+            acquired = instance_lock.acquire()
+            if not acquired:
+                raise RuntimeError("Ya existe otra instancia de INSTAGRAM-BOT ejecutándose con el bloqueo exclusivo.")
+        try:
+            db.initialize()
+            db.recover_interrupted()
+            yield
+        finally:
+            coordinator.shutdown(timeout_seconds=15.0)
+            if instance_lock:
+                instance_lock.release()
 
     app = FastAPI(title='INSTAGRAM-BOT Local', lifespan=lifespan)
     app.state.db = db
@@ -121,28 +132,37 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None):
     @app.get('/api/accounts')
     def accounts():
         with db.connect() as con:
-            return rows(con, 'SELECT * FROM accounts ORDER BY archived,id')
+            return rows(con,
+                        'SELECT * FROM accounts WHERE archived=0 ORDER BY id DESC')
 
     @app.post('/api/accounts', status_code=201)
     def add_account(data: AccountIn):
+        resolved = profile_path(data.profile_arg)
         with db.connect() as con:
-            try:
-                item_id = con.execute('INSERT INTO accounts(name,profile_arg,profile_path) VALUES(?,?,?)',
-                                      (data.name.strip(), data.profile_arg, profile_path(data.profile_arg))).lastrowid
-            except sqlite3.IntegrityError:
-                raise HTTPException(409, 'Ese perfil ya esta registrado')
+            existing = con.execute('SELECT 1 FROM accounts WHERE profile_path=?', (resolved,)).fetchone()
+            if existing:
+                raise HTTPException(409, 'Ya existe una cuenta con esa carpeta o nombre de perfil')
+            item_id = con.execute(
+                'INSERT INTO accounts(name,profile_arg,profile_path) VALUES(?,?,?)',
+                (data.name.strip(), data.profile_arg.strip(), resolved)
+            ).lastrowid
             return require(con, 'accounts', item_id)
 
     @app.put('/api/accounts/{item_id}')
     def edit_account(item_id: int, data: AccountIn):
+        resolved = profile_path(data.profile_arg)
         with db.connect() as con:
             require(con, 'accounts', item_id)
             check_inactive(con, account_id=item_id)
-            try:
-                con.execute('UPDATE accounts SET name=?,profile_arg=?,profile_path=? WHERE id=?',
-                            (data.name.strip(), data.profile_arg, profile_path(data.profile_arg), item_id))
-            except sqlite3.IntegrityError:
-                raise HTTPException(409, 'Ese perfil ya esta registrado')
+            collision = con.execute(
+                'SELECT 1 FROM accounts WHERE profile_path=? AND id!=?', (resolved, item_id)
+            ).fetchone()
+            if collision:
+                raise HTTPException(409, 'Ya existe otra cuenta con esa carpeta o nombre de perfil')
+            con.execute(
+                'UPDATE accounts SET name=?,profile_arg=?,profile_path=? WHERE id=?',
+                (data.name.strip(), data.profile_arg.strip(), resolved, item_id)
+            )
             return require(con, 'accounts', item_id)
 
     @app.post('/api/accounts/{item_id}/archive')
@@ -151,25 +171,27 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None):
             require(con, 'accounts', item_id)
             check_inactive(con, account_id=item_id)
             con.execute('UPDATE accounts SET archived=1 WHERE id=?', (item_id,))
-            return require(con, 'accounts', item_id)
+            return {'id': item_id, 'archived': 1}
 
-    @app.post('/api/accounts/{item_id}/clear-attention')
-    def clear_account_attention(item_id: int):
+    @app.post('/api/accounts/{item_id}/clear_attention')
+    def clear_attention(item_id: int):
         with db.connect() as con:
             require(con, 'accounts', item_id)
             con.execute('UPDATE accounts SET attention_required=0,attention_reason=NULL WHERE id=?', (item_id,))
-            return require(con, 'accounts', item_id)
+            return {'id': item_id, 'attention_required': 0}
 
     @app.get('/api/draws')
     def draws():
         with db.connect() as con:
-            return rows(con, 'SELECT * FROM draws ORDER BY archived,id')
+            return rows(con, 'SELECT * FROM draws WHERE archived=0 ORDER BY id DESC')
 
     @app.post('/api/draws', status_code=201)
     def add_draw(data: DrawIn):
         with db.connect() as con:
-            item_id = con.execute('INSERT INTO draws(name,url,notes) VALUES(?,?,?)',
-                                  (data.name.strip(), data.url, data.notes)).lastrowid
+            item_id = con.execute(
+                'INSERT INTO draws(name,url,notes) VALUES(?,?,?)',
+                (data.name.strip(), data.url.strip(), data.notes.strip())
+            ).lastrowid
             return require(con, 'draws', item_id)
 
     @app.put('/api/draws/{item_id}')
@@ -177,8 +199,10 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None):
         with db.connect() as con:
             require(con, 'draws', item_id)
             check_inactive(con, draw_id=item_id)
-            con.execute('UPDATE draws SET name=?,url=?,notes=? WHERE id=?',
-                        (data.name.strip(), data.url, data.notes, item_id))
+            con.execute(
+                'UPDATE draws SET name=?,url=?,notes=? WHERE id=?',
+                (data.name.strip(), data.url.strip(), data.notes.strip(), item_id)
+            )
             return require(con, 'draws', item_id)
 
     @app.post('/api/draws/{item_id}/archive')
