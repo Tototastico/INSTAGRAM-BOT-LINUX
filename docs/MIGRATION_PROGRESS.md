@@ -31,25 +31,16 @@
   - Configuración de entorno `deploy/linux/env.example`.
   - Unidades systemd: `instagram-bot.service` y `instagram-bot-display.service` (Xvfb).
   - Scripts bash completos: `install.sh`, `deploy.sh`, `update.sh`, `rollback.sh`, `backup.sh`, `healthcheck.sh`.
-- [ ] **Fase 6 — Validaciones y Pruebas**
-  - Tests unitarios y de integración para rutas, Chrome detection, DB backup/restore/migration, lock y lifespan.
+- [x] **Fase 6 — Validaciones y Pruebas**
+  - Tests unitarios y de integración para rutas, Chrome detection, DB backup/restore/migration, lock y lifespan en `tests/test_migration_and_platform.py`.
 - [ ] **Fase 7 — Documentacion Final**
-  - Guías detalladas en `docs/`.
+  - Guías detalladas en `docs/`: `LINUX_INSTALLATION.md`, `DATABASE_MIGRATION.md`, `DEPLOYMENT.md`, `UPDATE_AND_ROLLBACK.md`, `WINDOWS_COMPATIBILITY.md`, `SECURITY.md`, `TESTING.md`.
 
 ---
 
-## Archivos modificados en Fase 5:
-- `requirements-server.txt` (nuevo)
-- `deploy/linux/env.example` (nuevo)
-- `deploy/linux/systemd/instagram-bot-display.service` (nuevo)
-- `deploy/linux/systemd/instagram-bot.service` (nuevo)
-- `deploy/linux/install.sh` (nuevo)
-- `deploy/linux/deploy.sh` (nuevo)
-- `deploy/linux/update.sh` (nuevo)
-- `deploy/linux/rollback.sh` (nuevo)
-- `deploy/linux/backup.sh` (nuevo)
-- `deploy/linux/healthcheck.sh` (nuevo)
+## Archivos modificados en Fase 6:
+- `tests/test_migration_and_platform.py` (nuevo)
 - `docs/MIGRATION_PROGRESS.md`
 
 ## Siguiente paso:
-- Iniciar **Fase 6 — Validaciones y Pruebas**: crear suite de tests automatizada para las nuevas capacidades (`tests/test_migration_and_platform.py`).
+- Iniciar **Fase 7 — Documentación Final**: redactar todos los documentos técnicos requeridos.
