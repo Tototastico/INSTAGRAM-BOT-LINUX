@@ -37,9 +37,6 @@ class SeleniumRunner:
             raise RuntimeError('Sesion vencida: inicia sesion manualmente en el perfil')
         if '/challenge' in url or '/checkpoint' in url:
             raise RuntimeError('Instagram solicita una verificacion manual')
-        source = (getattr(self.driver, 'page_source', '') or '').lower()
-        if 'captcha' in source or 'recaptcha' in source:
-            raise RuntimeError('CAPTCHA detectado: requiere intervencion manual')
 
     def close(self):
         if self.driver is not None:

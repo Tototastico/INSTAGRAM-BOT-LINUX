@@ -39,7 +39,7 @@ Revisa la cuenta y el sorteo importados antes de iniciar la primera tarea. Crea 
 
 Pausa y cancelacion se aplican entre comentarios, despues de que termine la accion en curso. Una tarea interrumpida por cierre del programa requiere reanudacion manual. El contador **Clics** refleja que Selenium hizo clic en Publicar; **Confirmados** solo contaria una comprobacion independiente, que aun no existe.
 
-No ejecutes `main.py` y el panel al mismo tiempo con el mismo perfil de Chrome. El flujo original permanece disponible como respaldo. Si Chrome muestra login, desafio o CAPTCHA, resuelvelo manualmente; la tarea se detiene con un error visible.
+No ejecutes `main.py` y el panel al mismo tiempo con el mismo perfil de Chrome. El flujo original permanece disponible como respaldo. Si Chrome muestra login, desafio o CAPTCHA, resuelvelo manualmente. El panel detecta las URL de login y desafio; si la caja de comentarios no aparece, la tarea se detiene con un error.
 
 ## Pruebas
 

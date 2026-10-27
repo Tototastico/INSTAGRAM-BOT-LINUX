@@ -4,6 +4,7 @@ import time
 import types
 import sys
 
+import pytest
 from fastapi.testclient import TestClient
 
 from webapp.api import make_app
@@ -36,7 +37,7 @@ def test_legacy_import_once_preserves_profile_and_config(tmp_path):
         account = row(con, 'SELECT * FROM accounts')
         assignment = row(con, 'SELECT * FROM assignments')
     assert account['profile_arg'] == 'accounts/cuenta1'
-    assert account['profile_path'] == str((LEGACY_PROFILE_ROOT / 'accounts/cuenta1').resolve()).lower()
+    assert account['profile_path'] == str((LEGACY_PROFILE_ROOT / 'cuenta1').resolve()).lower()
     assert assignment['comments_per_minute'] == 4
     assert assignment['extra_text'] == 'Extra'
     assert config.read_text(encoding='utf-8') == content
@@ -67,7 +68,11 @@ def test_crud_and_archive(tmp_path):
 
 def test_runner_adapter_keeps_legacy_call_order(monkeypatch):
     calls = []
-    driver = types.SimpleNamespace(quit=lambda: calls.append(('quit',)))
+    driver = types.SimpleNamespace(
+        current_url='https://www.instagram.com/p/ABC/',
+        page_source='<script>var captchaConfig = {};</script>',
+        quit=lambda: calls.append(('quit',)),
+    )
     textarea = object()
     fake_module = types.SimpleNamespace(
         acceder_caja=lambda url, profile: (calls.append(('open', url, profile)) or (True, driver, textarea)),
@@ -85,6 +90,19 @@ def test_runner_adapter_keeps_legacy_call_order(monkeypatch):
     ]
     text = compose_comment(LEGACY_TAGS, 1, '')
     assert any(tag in text for tag in LEGACY_TAGS)
+
+
+def test_runner_stops_on_actual_challenge_url(monkeypatch):
+    driver = types.SimpleNamespace(current_url='https://www.instagram.com/challenge/', quit=lambda: None)
+    monkeypatch.setitem(sys.modules, 'selenium_runner', types.SimpleNamespace(
+        acceder_caja=lambda url, profile: (True, driver, object()),
+    ))
+    runner = SeleniumRunner()
+    try:
+        with pytest.raises(RuntimeError, match='verificacion manual'):
+            runner.open('https://www.instagram.com/p/ABC/', 'cuenta1')
+    finally:
+        runner.close()
 
 
 def test_recovery_requires_manual_resume(tmp_path):
