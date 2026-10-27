@@ -7,32 +7,34 @@ import time
 import random
 from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException
 from selenium.webdriver.common.action_chains import ActionChains
+from webapp.chrome_binary import chrome_binary_and_major
 
 def crear_driver(nombre_cuenta):
+    chrome_executable, chrome_major = chrome_binary_and_major()
     options = uc.ChromeOptions()
-    perfil_path = f"C:/Users/user/Desktop/INSTAGRAM-BOT/accounts/{nombre_cuenta}"
+    perfil_path = f"E:/tobias/INSTAGRAM-BOT/accounts/{nombre_cuenta}"
     options.add_argument(f"--user-data-dir={perfil_path}")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--start-maximized")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
 
-    driver = uc.Chrome(options=options)
+    driver = uc.Chrome(options=options, browser_executable_path=chrome_executable, version_main=chrome_major)
     return driver
 
 def acceder_caja(url_post, nombre_cuenta):
     print(f"[+] Iniciando sesión con la cuenta: {nombre_cuenta}")
     driver = crear_driver(nombre_cuenta)
-    driver.get(url_post)
-    driver.maximize_window()
-    actions = ActionChains(driver)
-    time.sleep(2)
-    driver.execute_script("window.focus(); document.activeElement.blur();")
-    body = driver.find_element(By.TAG_NAME, "body")
-    actions.move_by_offset(10, 10).click().perform()
-    body.click()
-
     try:
+        driver.get(url_post)
+        driver.maximize_window()
+        actions = ActionChains(driver)
+        time.sleep(2)
+        driver.execute_script("window.focus(); document.activeElement.blur();")
+        body = driver.find_element(By.TAG_NAME, "body")
+        actions.move_by_offset(10, 10).click().perform()
+        body.click()
+
         time.sleep(random.uniform(5, 8))
         wait = WebDriverWait(driver, 15)
 
@@ -51,12 +53,13 @@ def acceder_caja(url_post, nombre_cuenta):
                 time.sleep(2)
         else:
             print("[X] No se pudo encontrar el textarea luego de varios intentos.")
-            return False, None, None
+            return False, driver, None
 
         return True, driver, textarea
 
     except Exception as e:
         print("[!] Error al comentar:", e)
+        return False, driver, None
     #finally:
     #    time.sleep(random.uniform(4, 6))
     #    driver.quit()

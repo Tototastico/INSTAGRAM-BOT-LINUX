@@ -8,11 +8,14 @@ import random
 from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException
 from selenium.webdriver.common.action_chains import ActionChains
 
+from webapp.db import profile_path
+
 def crear_driver(nombre_cuenta):
     options = uc.ChromeOptions()
     
     # Ruta absoluta al perfil
-    perfil_path = f"C:/Users/user/Desktop/INSTAGRAM-BOT/accounts/{nombre_cuenta}"
+
+    perfil_path = profile_path(nombre_cuenta)
     options.add_argument(f"--user-data-dir={perfil_path}")
     
     # Parámetros adicionales para evitar detección
