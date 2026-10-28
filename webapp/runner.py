@@ -31,7 +31,7 @@ class SeleniumRunner:
         from selenium_runner import comentar_en_post
 
         self._check_session()
-        pending = self.textarea.get_dom_property('value')
+        pending = self.textarea.get_property("value") or ""
         if pending is None:
             pending = self.textarea.get_attribute('value')
         if pending and pending.strip():
