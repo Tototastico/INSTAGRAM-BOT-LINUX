@@ -1,0 +1,20 @@
+[Unit]
+Description=Instagram Bot Linux web panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jarvisadmin
+Group=jarvisadmin
+WorkingDirectory=/opt/instagram-bot-linux
+EnvironmentFile=/etc/instagram-bot/instagram-bot.env
+ExecStart=/usr/bin/bash /opt/instagram-bot-linux/deploy/start.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,39 +1,99 @@
+__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+.pytest_cache/
+accounts/
+/accounts
+# Perfiles de Chrome y cuentas privadas
+/accounts/
+
+# Bases de datos locales
+/data/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Credenciales y configuracion privada
+.env
+.env.*
+!.env.example
+secrets/
+.secrets/
+
 # Python
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.coverage
-htmlcov/
-venv/
 .venv/
-env/
+venv/
+.pytest_cache/
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
-frontend/.vite/
 
-# Base de datos local y backups
-*.sqlite3
-*.sqlite3-wal
-*.sqlite3-shm
-*.sqlite3.bak
+# Logs y archivos temporales
+*.log
+*.tmp
 *.bak
-data/*.sqlite3*
-!data/.gitkeep
 
-# Perfiles Chrome y sesiones
-accounts/
-profiles/
+# Entornos locales
+.vscode/
+.idea/
 
-# Archivos de entorno y configuraciones con credenciales
+# Configuracion privada
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+/config.json
+/gui_config.json
 
-# Archivos de empaquetado / temporales
+# Paquetes locales
+/INSTAGRAM-BOT.zip
+/frontend/.vite/
+/.git copy/
+/revisar/
+*.sqlite
+*.db
+*.pem
+*.key
+*.cookie
+*.session
+/*.bat
+/crear_cuenta.txt
+
+# Datos sensibles
+/accounts/
+/data/
+.env
+.env.*
+!.env.example
+/config.json
+/gui_config.json
+*.sqlite3
+*.sqlite3-*
+
+# Git anterior
+.git copy/
+
+# Perfiles de Chrome
+chrome-profiles/
+cookies/
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.pyc
+
+# Frontend
+node_modules/
+dist/
+frontend/node_modules/
+frontend/dist/
+
+# Archivos locales
 *.zip
-*.tar.gz
-revisar/
+*.log
+*.bak

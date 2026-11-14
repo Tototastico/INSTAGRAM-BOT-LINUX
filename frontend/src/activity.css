@@ -1,0 +1,12 @@
+.active-task-row td { background: #edf8f1; }
+.active-task-row td:first-child { box-shadow: inset 4px 0 #238c59; }
+.active-task-row:hover td, .active-task-row.selected-row td { background: #e1f3e8; }
+.task-error-cell { max-width: 230px; width: 210px; }
+.task-error-cell > span { display: flex; align-items: center; gap: 6px; max-width: 210px; color: #ae554c; font-size: 11px; }
+.task-error-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-error-cell svg { flex: none; }
+.task-error-detail { margin-top: 18px; padding: 12px 15px; border-left: 3px solid #bf6156; background: #fff2f0; color: #8f4842; }
+.task-error-detail > div { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.task-error-detail pre { max-height: 240px; margin: 9px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 Consolas,monospace; }
+.event-selenium_retry { background: #d6a13d; }
+.event-selenium_error { background: #bf6156; }

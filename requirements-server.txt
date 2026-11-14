@@ -1,16 +1,4 @@
-# Dependencias exclusivas para el servidor VPS Ubuntu Linux
-# Sin componentes gráficos de escritorio (PyQt5)
-
-# Backend Web y Servidor ASGI
 fastapi>=0.115,<1
 uvicorn>=0.34,<1
-httpx>=0.27,<1
-pydantic>=2.0,<3
-
-# Automatización de Navegador
-selenium>=4.10.0
-undetected-chromedriver>=3.5.4
-
-# Utilidades y Testing
-pytest>=8,<10
-pytest-asyncio>=0.24,<1
+selenium>=4.10,<5
+undetected-chromedriver>=3.5.4,<4

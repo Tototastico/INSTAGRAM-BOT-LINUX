@@ -1,13 +1,15 @@
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from .settings import accounts_dir, db_path, ensure_private_dir
 
-from .paths import get_accounts_dir, get_db_path, resolve_profile_path
 
 ROOT = Path(__file__).resolve().parents[1]
-ACCOUNTS_ROOT = get_accounts_dir()
+
+ACCOUNTS_ROOT = accounts_dir()
 LEGACY_PROFILE_ROOT = ACCOUNTS_ROOT
 LEGACY_TAGS = [
     '@camifernandl', '@karinasilvetti1', '@camisuliii', '@soyteoo',
@@ -20,20 +22,36 @@ def now():
 
 
 def profile_path(profile_arg):
-    return resolve_profile_path(profile_arg, get_accounts_dir())
+    path = Path(profile_arg.replace("\\", "/"))
+
+    if path.is_absolute() or PureWindowsPath(profile_arg).is_absolute() or ".." in path.parts or not path.parts:
+        raise ValueError("Ruta de perfil inválida")
+
+    parts = list(path.parts)
+
+    if parts[0].lower() == "accounts":
+        parts = parts[1:]
+
+    if len(parts) != 1 or parts[0] in ("", "."):
+        raise ValueError("Usá un nombre de perfil, por ejemplo cuenta1")
+
+    return str((accounts_dir() / parts[0]).resolve())
 
 
 class Database:
     def __init__(self, path=None, legacy_config=None, initialize=True):
-        self.path = Path(path or get_db_path())
-        self.legacy_config = Path(legacy_config or ROOT / 'config.json')
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = Path(path) if path is not None else db_path()
+        # Import of a legacy Windows config requires an explicit path.
+        self.legacy_config = Path(legacy_config) if legacy_config is not None else None
+        ensure_private_dir(self.path.parent)
         if initialize:
             self.initialize()
 
     @contextmanager
     def connect(self):
         con = sqlite3.connect(self.path, timeout=30)
+        if os.name == 'posix':
+            self.path.chmod(0o600)
         con.row_factory = sqlite3.Row
         con.execute('PRAGMA foreign_keys = ON')
         con.execute('PRAGMA busy_timeout = 30000')
@@ -59,7 +77,9 @@ class Database:
                 );
                 CREATE TABLE IF NOT EXISTS draws (
                     id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
-                    notes TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0
+                    notes TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0,
+                    end_date TEXT, end_time TEXT, tag_count INTEGER NOT NULL DEFAULT 1,
+                    comment_count INTEGER, comment_count_checked_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS assignments (
                     id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -71,6 +91,8 @@ class Database:
                 );
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY, assignment_id INTEGER NOT NULL REFERENCES assignments(id),
+                    account_id INTEGER REFERENCES accounts(id),
+                    draw_id INTEGER REFERENCES draws(id),
                     status TEXT NOT NULL, elapsed_seconds REAL NOT NULL DEFAULT 0,
                     attempts INTEGER NOT NULL DEFAULT 0, clicked INTEGER NOT NULL DEFAULT 0,
                     confirmed INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0,
@@ -80,6 +102,12 @@ class Database:
                     id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id),
                     kind TEXT NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS tag_library (
+                    tag TEXT PRIMARY KEY
+                );
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY, value TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, id DESC);
             ''')
@@ -88,7 +116,51 @@ class Database:
                 con.execute('ALTER TABLE accounts ADD COLUMN attention_required INTEGER NOT NULL DEFAULT 0')
             if 'attention_reason' not in columns:
                 con.execute('ALTER TABLE accounts ADD COLUMN attention_reason TEXT')
+            draw_columns = {item['name'] for item in con.execute('PRAGMA table_info(draws)')}
+            if 'end_date' not in draw_columns:
+                con.execute('ALTER TABLE draws ADD COLUMN end_date TEXT')
+            if 'end_time' not in draw_columns:
+                con.execute('ALTER TABLE draws ADD COLUMN end_time TEXT')
+            if 'comment_count' not in draw_columns:
+                con.execute('ALTER TABLE draws ADD COLUMN comment_count INTEGER')
+            if 'comment_count_checked_at' not in draw_columns:
+                con.execute('ALTER TABLE draws ADD COLUMN comment_count_checked_at TEXT')
+            if 'tag_count' not in draw_columns:
+                con.execute('ALTER TABLE draws ADD COLUMN tag_count INTEGER NOT NULL DEFAULT 1')
+                con.execute('''UPDATE draws SET tag_count=COALESCE(
+                    (SELECT s.tag_count FROM assignments s WHERE s.draw_id=draws.id ORDER BY s.id LIMIT 1), 1)''')
+            task_columns = {item['name'] for item in con.execute('PRAGMA table_info(tasks)')}
+            if 'account_id' not in task_columns:
+                con.execute('ALTER TABLE tasks ADD COLUMN account_id INTEGER REFERENCES accounts(id)')
+            if 'draw_id' not in task_columns:
+                con.execute('ALTER TABLE tasks ADD COLUMN draw_id INTEGER REFERENCES draws(id)')
+            con.execute('''UPDATE tasks SET
+                account_id=COALESCE(account_id,(SELECT account_id FROM assignments WHERE id=tasks.assignment_id)),
+                draw_id=COALESCE(draw_id,(SELECT draw_id FROM assignments WHERE id=tasks.assignment_id))
+                WHERE account_id IS NULL OR draw_id IS NULL''')
+            con.execute('''CREATE TRIGGER IF NOT EXISTS snapshot_task_assignment
+                AFTER INSERT ON tasks
+                WHEN NEW.account_id IS NULL OR NEW.draw_id IS NULL
+                BEGIN
+                    UPDATE tasks SET
+                        account_id=COALESCE(NEW.account_id,(SELECT account_id FROM assignments WHERE id=NEW.assignment_id)),
+                        draw_id=COALESCE(NEW.draw_id,(SELECT draw_id FROM assignments WHERE id=NEW.assignment_id))
+                    WHERE id=NEW.id;
+                END''')
+            con.execute('CREATE INDEX IF NOT EXISTS idx_tasks_draw_id ON tasks(draw_id)')
             self._import_legacy(con)
+            con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('reminder_days_before','1')")
+            con.execute("""INSERT OR IGNORE INTO settings(key,value)
+                SELECT 'reminder_hours_before', CASE value WHEN '0' THEN '6' ELSE '24' END
+                FROM settings WHERE key='reminder_days_before'""")
+            for assignment in con.execute('SELECT tags_json FROM assignments'):
+                try:
+                    tags = json.loads(assignment['tags_json'])
+                except (ValueError, TypeError):
+                    continue
+                for tag in tags:
+                    if isinstance(tag, str) and tag.startswith('@'):
+                        con.execute('INSERT OR IGNORE INTO tag_library(tag) VALUES(?)', (tag,))
 
     def recover_interrupted(self):
         with self.connect() as con:
@@ -100,15 +172,16 @@ class Database:
     def _import_legacy(self, con):
         if con.execute("SELECT 1 FROM meta WHERE key='legacy_imported'").fetchone():
             return
-        if self.legacy_config.exists():
+        if self.legacy_config is not None and self.legacy_config.exists():
             cfg = json.loads(self.legacy_config.read_text(encoding='utf-8'))
             profiles = cfg.get('perfil_chrome', [])
             if isinstance(profiles, str):
                 profiles = [profiles]
             url = cfg.get('url_post', '').strip()
             if url and profiles:
-                draw_id = con.execute('INSERT INTO draws(name,url,notes) VALUES(?,?,?)',
-                                      ('Sorteo importado', url, 'Importado desde config.json')).lastrowid
+                draw_id = con.execute('INSERT INTO draws(name,url,notes,tag_count) VALUES(?,?,?,?)',
+                                      ('Sorteo importado', url, 'Importado desde config.json',
+                                       int(cfg.get('etiquetas', 1)))).lastrowid
                 for arg in profiles:
                     resolved = profile_path(arg)
                     account_id = con.execute('INSERT OR IGNORE INTO accounts(name,profile_arg,profile_path) VALUES(?,?,?)',

@@ -1,0 +1,36 @@
+.dashboard-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-bottom:24px}
+.dashboard-section{min-width:0}
+.dashboard-section .section-heading{min-height:34px}
+.compact-list{border-top:1px solid #dde6e5}
+.compact-row{display:flex;align-items:center;gap:14px;min-height:42px;border-bottom:1px solid #e5eceb;color:#6b7e80;font-size:12px}
+.compact-row .compact-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#34494b}
+.compact-row strong{color:#257667;white-space:nowrap}
+.reminder-setting{display:flex;align-items:center;gap:6px;color:#697d80;font-size:11px}
+.reminder-setting select{border:1px solid #d9e3e2;border-radius:4px;padding:5px;background:#fff;color:#35494b;font-size:11px}
+.reminder-banner{display:flex;align-items:center;gap:10px;padding:10px 12px;border-left:3px solid #c78543;background:#fff5e8;margin-bottom:9px;color:#7b542c;font-size:12px}
+.reminder-banner strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reminder-banner span{margin-left:auto;white-space:nowrap}
+.reminder-banner a{white-space:nowrap}
+.trend-section{margin-bottom:29px}
+.trend-chart{height:155px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px;padding:6px 8px 0;border-bottom:1px solid #dce6e5}
+.trend-column{display:flex;flex-direction:column;align-items:center;min-width:0;color:#687e80;font-size:11px}
+.trend-column span{height:18px}
+.trend-column small{height:21px;padding-top:4px;font-size:10px}
+.trend-track{flex:1;display:flex;align-items:flex-end;width:min(100%,52px);background:#edf3f1}
+.trend-track div{width:100%;background:#369487;min-height:2px}
+.account-note{display:flex;flex-direction:column;gap:6px;padding:11px 14px;margin-bottom:18px;border-left:3px solid #8ba9a4;background:#eff5f3;font-size:11px;color:#4a6265}
+.account-note code{align-self:flex-start;max-width:100%;overflow-wrap:anywhere;white-space:normal}
+.assignment-tools{display:flex;justify-content:flex-end;margin:-8px 0 10px}
+.tag-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;max-height:176px;overflow:auto;margin:-8px 0 18px;padding:9px;border:1px solid #dce6e4;border-radius:5px}
+.tag-choice{display:flex;align-items:center;gap:7px;min-width:0;font-size:11px;color:#3c5356;overflow-wrap:anywhere}
+.tag-choice input{accent-color:#18877b;flex:none}
+.tag-library{max-height:210px;overflow:auto;border-top:1px solid #e4ebea}
+.tag-library-row{display:flex;align-items:center;justify-content:space-between;min-height:36px;border-bottom:1px solid #e4ebea;font-size:12px;color:#3c5356}
+.draw-tools{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.draw-tools .toolbar{flex:1 1 220px;margin:0}
+.draw-select{display:flex;flex-direction:column;gap:5px;min-width:150px;color:#687d80;font-size:11px;font-weight:650}
+.draw-select select{height:36px;padding:0 9px;border:1px solid #d9e3e2;border-radius:5px;background:#fff;color:#35494b;font-size:12px}
+.count-cell strong,.count-cell small{display:block;white-space:nowrap}
+.count-cell small{margin-top:3px;color:#849698;font-size:10px;font-weight:400}
+@media(max-width:750px){.dashboard-grid{grid-template-columns:1fr;gap:20px}.reminder-setting{font-size:0}.reminder-setting select{font-size:11px}}
+@media(max-width:450px){.tag-picker{grid-template-columns:1fr}.reminder-banner{flex-wrap:wrap}.reminder-banner span{margin-left:0}.trend-chart{gap:4px}.draw-tools .toolbar{flex-basis:100%}.draw-select{flex:1 1 145px;min-width:0}}
