@@ -1,0 +1,18 @@
+.visual-backdrop{position:fixed;inset:0;z-index:40;background:#142d32ad;display:grid;place-items:center;padding:14px}
+.visual-dialog{width:min(1100px,100%);max-height:calc(100dvh - 28px);overflow:auto;background:#fff;border-radius:9px;box-shadow:0 24px 70px #102b3055;padding:18px;display:flex;flex-direction:column;gap:14px}
+.visual-head,.visual-toolbar,.visual-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.visual-head{border-bottom:1px solid #e3ebea;padding-bottom:12px}
+.visual-head small{display:block;font-size:10px;color:#68847f;letter-spacing:1px}
+.visual-head h2{margin:3px 0;font-size:22px;color:#243b3d}
+.visual-head span,.visual-toolbar small{display:block;color:#758c8b;font-size:12px}
+.visual-toolbar strong{display:block;color:#27584f;font-size:13px;margin-bottom:4px}
+.visual-actions{justify-content:flex-end}
+.visual-actions .button,.visual-head .button{min-height:42px}
+.visual-login{display:flex;align-items:end;gap:12px;flex-wrap:wrap;padding:12px 0}
+.visual-login label{display:grid;gap:6px;font-size:12px;font-weight:650;color:#4d6564;flex:1 1 240px}
+.visual-login input{min-height:44px;border:1px solid #cad9d8;border-radius:5px;padding:8px 10px;font-size:16px}
+.visual-error{margin:0;padding:10px;border:1px solid #ecc9c6;border-radius:5px;background:#fff0ef;color:#994b45;font-size:12px;overflow-wrap:anywhere}
+.visual-note{margin:0;padding:12px;background:#f0f6f4;border-radius:5px;color:#5a7471;font-size:12px}
+.visual-screen{width:100%;height:min(64vh,670px);min-height:300px;background:#263238;overflow:hidden;border-radius:5px;touch-action:none}
+.visual-screen canvas{max-width:100%}
+@media(max-width:650px){.visual-backdrop{padding:0}.visual-dialog{height:100dvh;max-height:100dvh;border-radius:0;padding:12px}.visual-head h2{font-size:18px}.visual-actions{width:100%;justify-content:stretch;display:grid;grid-template-columns:1fr 1fr}.visual-actions .button{white-space:normal;text-align:center;padding:7px}.visual-screen{min-height:260px;height:52dvh}.visual-login .button{min-height:44px;width:100%}}

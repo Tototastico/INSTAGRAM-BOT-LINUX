@@ -8,13 +8,16 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .coordinator import ACTIVE, Coordinator
 from .db import Database, now, profile_path, row, rows
+from .visual_auth import COOKIE, VisualAuth
+from .visual_sessions import VisualSessionError, VisualSessions
+from .settings import ensure_private_dir
 
 
 class AccountIn(BaseModel):
@@ -27,12 +30,17 @@ class AccountIn(BaseModel):
         profile_path(value)
         return value
 
+
     @field_validator('name')
     @classmethod
     def nonempty_name(cls, value):
         if not value.strip():
             raise ValueError('El nombre no puede estar vacio')
         return value
+
+
+class VisualLoginIn(BaseModel):
+    password: str = Field(min_length=1, max_length=500)
 
 
 class DrawIn(BaseModel):
@@ -113,33 +121,176 @@ class HistoryCorrectionIn(BaseModel):
         return value
 
 
-def make_app(db_path=None, legacy_config=None, runner_factory=None):
+def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_factory=None):
     db = Database(db_path, legacy_config, initialize=False)
     coordinator = Coordinator(db, runner_factory) if runner_factory else Coordinator(db)
+    visual = visual_factory(db, coordinator) if visual_factory else VisualSessions(db, coordinator)
+    visual_auth = VisualAuth()
 
     @asynccontextmanager
     async def lifespan(app):
         db.initialize()
         db.recover_interrupted()
         coordinator.diagnostics.prune()
+        visual.recover_orphans()
 
         async def prune_diagnostics():
             while True:
                 await asyncio.sleep(3600)
                 await asyncio.to_thread(coordinator.diagnostics.prune)
 
-        cleanup = asyncio.create_task(prune_diagnostics())
+        async def prune_visual():
+            while True:
+                await asyncio.sleep(15)
+                await asyncio.to_thread(visual.prune)
+
+        cleanup = [asyncio.create_task(prune_diagnostics()), asyncio.create_task(prune_visual())]
         try:
             yield
         finally:
-            cleanup.cancel()
-            with suppress(asyncio.CancelledError):
-                await cleanup
-            coordinator.shutdown()
+            for task in cleanup:
+                task.cancel()
+            for task in cleanup:
+                with suppress(asyncio.CancelledError):
+                    await task
+            try:
+                visual.close_all()
+            finally:
+                coordinator.shutdown()
 
     app = FastAPI(title='INSTAGRAM-BOT Local', lifespan=lifespan)
     app.state.db = db
     app.state.coordinator = coordinator
+    app.state.visual = visual
+    app.state.visual_auth = visual_auth
+
+    def visual_required(request: Request, mutate=False):
+        if not visual_auth.enabled():
+            raise HTTPException(503, 'Configura BOT_PUBLIC_ORIGIN y BOT_VISUAL_ADMIN_PASSWORD_HASH')
+        session_id = request.cookies.get(COOKIE)
+        csrf = request.headers.get('x-visual-csrf') if mutate else None
+        if (mutate and (not csrf or not visual_auth.origin_ok(request.headers.get('origin')))) or not visual_auth.check(session_id, csrf, renew=True):
+            raise HTTPException(401 if not session_id else 403, 'Acceso visual no autorizado')
+
+    @app.get('/api/visual/auth')
+    def visual_auth_status(request: Request):
+        session_id = request.cookies.get(COOKIE)
+        return JSONResponse({'enabled': visual_auth.enabled(), 'authenticated': visual_auth.check(session_id),
+                             'csrf': visual_auth.csrf(session_id) if visual_auth.check(session_id) else None},
+                            headers={'Cache-Control': 'no-store'})
+
+    @app.post('/api/visual/auth/login')
+    def visual_login(data: VisualLoginIn, request: Request):
+        if not visual_auth.enabled():
+            raise HTTPException(503, 'Acceso visual no configurado')
+        if not visual_auth.origin_ok(request.headers.get('origin')):
+            raise HTTPException(403, 'Origen no autorizado')
+        result = visual_auth.login(data.password, request.client.host if request.client else '')
+        if not result:
+            raise HTTPException(401, 'Clave incorrecta o acceso temporalmente limitado')
+        session_id, csrf = result
+        response = JSONResponse({'authenticated': True, 'csrf': csrf}, headers={'Cache-Control': 'no-store'})
+        response.set_cookie(COOKIE, session_id, max_age=1800, httponly=True, secure=True, samesite='strict', path='/api')
+        return response
+
+    @app.post('/api/visual/auth/logout')
+    def visual_logout(request: Request):
+        visual_required(request, mutate=True)
+        visual_auth.logout(request.cookies.get(COOKIE))
+        response = JSONResponse({'authenticated': False}, headers={'Cache-Control': 'no-store'})
+        response.delete_cookie(COOKIE, path='/api')
+        return response
+
+    @app.get('/api/accounts/{item_id}/session')
+    def account_session(item_id: int, request: Request):
+        visual_required(request)
+        with db.connect() as con:
+            account = row(con, 'SELECT id,profile_path,session_status,session_checked_at FROM accounts WHERE id=?', (item_id,))
+        if not account:
+            raise HTTPException(404, 'Cuenta inexistente')
+        visual_state = visual.info(item_id)
+        busy = coordinator.active_profiles.get(account.pop('profile_path'))
+        if visual_state.get('checking'):
+            account['session_status'] = 'verification_in_progress'
+        elif busy not in (None, f'visual:{item_id}'):
+            account['session_status'] = 'in_use_by_task'
+        return {**account, 'visual': visual_state}
+
+    @app.post('/api/accounts/{item_id}/session/open')
+    def open_visual(item_id: int, request: Request):
+        visual_required(request, mutate=True)
+        try:
+            return visual.open(item_id)
+        except VisualSessionError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post('/api/accounts/{item_id}/session/close')
+    def close_visual(item_id: int, request: Request):
+        visual_required(request, mutate=True)
+        try:
+            visual.close(item_id)
+            return {'open': False}
+        except VisualSessionError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post('/api/accounts/{item_id}/session/verify')
+    def verify_visual(item_id: int, request: Request):
+        visual_required(request, mutate=True)
+        try:
+            return {'status': visual.verify(item_id)}
+        except VisualSessionError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.websocket('/api/accounts/{item_id}/session/ws')
+    async def visual_socket(websocket: WebSocket, item_id: int):
+        protocols = websocket.headers.get('sec-websocket-protocol', '').split(',')
+        csrf = next((p.strip()[5:] for p in protocols if p.strip().startswith('csrf.')), None)
+        if (not visual_auth.enabled() or not visual_auth.origin_ok(websocket.headers.get('origin')) or
+                not visual_auth.check(websocket.cookies.get(COOKIE), csrf, renew=False) or csrf is None):
+            await websocket.close(code=4403)
+            return
+        session = visual.viewer(item_id, True)
+        if not session:
+            await websocket.close(code=4409)
+            return
+        writer = None
+        try:
+            reader, writer = await asyncio.open_connection('127.0.0.1', session.port)
+            await websocket.accept(subprotocol='binary' if 'binary' in [p.strip() for p in protocols] else None)
+
+            async def from_vnc():
+                while data := await reader.read(65536):
+                    await websocket.send_bytes(data)
+
+            async def to_vnc():
+                while True:
+                    message = await websocket.receive()
+                    if message['type'] == 'websocket.disconnect':
+                        return
+                    data = message.get('bytes') or (message.get('text') or '').encode()
+                    writer.write(data)
+                    await writer.drain()
+                    visual.touch(item_id)
+
+            tasks = [asyncio.create_task(from_vnc()), asyncio.create_task(to_vnc())]
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                with suppress(asyncio.CancelledError):
+                    await task
+            for task in done:
+                task.result()
+        except (OSError, WebSocketDisconnect):
+            pass
+        finally:
+            if writer:
+                writer.close()
+                with suppress(OSError):
+                    await writer.wait_closed()
+            visual.viewer(item_id, False)
+            with suppress(RuntimeError):
+                await websocket.close()
 
     def require_diagnostics_token(value):
         expected = os.environ.get('BOT_DIAGNOSTICS_TOKEN', '')
@@ -189,6 +340,8 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None):
         return found
 
     def check_inactive(con, account_id=None, draw_id=None, assignment_id=None):
+        if account_id is not None and visual.info(account_id)['open']:
+            raise HTTPException(409, 'Cierra el navegador visual antes de editar la cuenta')
         resumable = (*ACTIVE, 'paused', 'interrupted')
         sql = f"SELECT 1 FROM tasks t WHERE t.status IN ({','.join('?' for _ in resumable)})"
         params = list(resumable)
@@ -273,7 +426,13 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None):
     @app.get('/api/accounts')
     def accounts():
         with db.connect() as con:
-            return rows(con, 'SELECT * FROM accounts ORDER BY archived,id')
+            items = rows(con, 'SELECT * FROM accounts ORDER BY archived,id')
+        for item in items:
+            if visual.info(item['id']).get('checking'):
+                item['session_status'] = 'verification_in_progress'
+            elif coordinator.active_profiles.get(item['profile_path']) not in (None, f"visual:{item['id']}"):
+                item['session_status'] = 'in_use_by_task'
+        return items
 
     @app.post('/api/accounts', status_code=201)
     def add_account(data: AccountIn):
@@ -281,6 +440,7 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None):
             try:
                 item_id = con.execute('INSERT INTO accounts(name,profile_arg,profile_path) VALUES(?,?,?)',
                                       (data.name.strip(), data.profile_arg, profile_path(data.profile_arg))).lastrowid
+                ensure_private_dir(Path(profile_path(data.profile_arg)))
             except sqlite3.IntegrityError:
                 raise HTTPException(409, 'Ese perfil ya esta registrado')
             return require(con, 'accounts', item_id)

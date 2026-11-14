@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { deadlineFor, drawState, reminderDue, sortDraws, timeLeft } from './draws.mjs'
 import Diagnostics from './Diagnostics.jsx'
+import VisualAccount from './VisualAccount.jsx'
 import {
   Activity, Archive, Bell, Check, ChevronRight, CircleAlert, CircleCheck, Clock3,
   Edit3, LayoutDashboard, Link2, ListTodo, Menu, Pause, Play, Plus, RefreshCw,
@@ -18,6 +19,12 @@ const statusLabels = {
   queued: 'En cola', running: 'En curso', pausing: 'Pausando', paused: 'Pausada',
   cancelling: 'Cancelando', cancelled: 'Cancelada', completed: 'Completada',
   failed: 'Error', interrupted: 'Interrumpida',
+}
+const sessionLabels = {
+  connected: 'Sesión conectada', not_signed_in: 'Sin iniciar sesión',
+  verification_required: 'Requiere verificación', session_expired: 'Sesión caducada',
+  verification_error: 'Error al verificar', unknown: 'No verificada',
+  verification_in_progress: 'Verificación en curso', in_use_by_task: 'En uso por una tarea',
 }
 const eventLabels = {
   attempt: 'Intento', clicked: 'Clic en Publicar', confirmed: 'Confirmado',
@@ -116,6 +123,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [data, setData] = useState({ overview: {}, dashboard: { draws: [], trend: [] }, settings: { reminder_hours_before: 24 }, tags: [], accounts: [], draws: [], assignments: [], tasks: [], events: [] })
   const [modal, setModal] = useState(null)
+  const [visualAccount, setVisualAccount] = useState(null)
   const [form, setForm] = useState({})
   const [filter, setFilter] = useState('')
   const [drawStatusFilter, setDrawStatusFilter] = useState('active')
@@ -301,12 +309,20 @@ function App() {
           <TaskTable tasks={data.tasks} limit={6} perform={perform} busy={busy} onSelect={id => { setSelectedTask(id); setView('actividad') }} />
         </>}
         {view === 'cuentas' && <>
-          <PageHeading title="Cuentas" subtitle="Perfiles de Chrome disponibles para las asignaciones." action="Nueva cuenta" onAction={() => openModal('accounts')} />
-          <div className="account-note"><strong>Perfiles nuevos en Linux</strong><span>Configura BOT_ACCOUNTS_DIR y crea una cuenta con un nombre de perfil, por ejemplo cuenta2. Inicia sesión manualmente en ese perfil antes de ejecutar tareas.</span></div>
+          <PageHeading title="Cuentas" subtitle="Perfiles Chrome y acceso manual a Instagram." action="Agregar cuenta" onAction={() => openModal('accounts')} />
+          <div className="account-note"><strong>Acceso visual privado</strong><span>Agrega una cuenta con un perfil, por ejemplo cuenta2. Abre su navegador desde la tarjeta de abajo, inicia sesion manualmente y cierralo al terminar.</span></div>
           <SearchBox value={filter} onChange={setFilter} />
-          <div className="table-wrap"><table><thead><tr><th>Cuenta</th><th>Argumento de perfil</th><th>Ruta efectiva</th><th>Estado</th><th className="actions-col">Acciones</th></tr></thead><tbody>
+          <div className="table-wrap accounts-table"><table><thead><tr><th>Cuenta</th><th>Argumento de perfil</th><th>Ruta efectiva</th><th>Estado</th><th className="actions-col">Acciones</th></tr></thead><tbody>
             {data.accounts.filter(x => match(`${x.name} ${x.profile_arg}`)).map(item => <tr key={item.id}><td className="primary-cell">{item.name}</td><td><code>{item.profile_arg}</code></td><td className="path-cell" title={item.profile_path}>{item.profile_path}</td><td>{item.archived ? <span className="status">Archivada</span> : item.attention_required ? <span className="status status-interrupted">Revisar</span> : <span className="status status-running">Activa</span>}</td><td className="row-actions"><IconButton icon={Edit3} title="Editar cuenta" onClick={() => openModal('accounts', item)} /><IconButton icon={Archive} title="Archivar cuenta" disabled={!!item.archived || busy} onClick={() => confirmAction(`¿Archivar la cuenta ${item.name}?`, () => perform(() => request(`/accounts/${item.id}/archive`, { method: 'POST' })))} /></td></tr>)}
           </tbody></table>{data.accounts.length === 0 && <Empty text="Todavia no hay cuentas." />}</div>
+          <div className="account-session-grid">{data.accounts.filter(x => !x.archived && match(`${x.name} ${x.profile_arg}`)).map(item => <article className="account-session-card" key={item.id}>
+            <div><strong>{item.name}</strong><code>{item.profile_arg}</code></div>
+            <span className="status">{sessionLabels[item.session_status] || 'No verificada'}</span>
+            <small>Última verificación: {item.session_checked_at ? new Date(item.session_checked_at).toLocaleString() : 'Nunca'}</small>
+            <small>{data.tasks.some(task => task.account_id === item.id && ['running', 'pausing', 'cancelling'].includes(task.status)) ? 'En uso por una tarea' : 'Sin tarea activa'}</small>
+            <button className="button primary" onClick={() => setVisualAccount(item)}>Iniciar sesión / verificar</button>
+            <div className="account-card-actions"><button className="button secondary" onClick={() => openModal('accounts', item)}>Editar</button><button className="button secondary" disabled={busy} onClick={() => confirmAction(`¿Archivar la cuenta ${item.name}?`, () => perform(() => request(`/accounts/${item.id}/archive`, { method: 'POST' })))}>Archivar</button></div>
+          </article>)}</div>
         </>}
         {view === 'sorteos' && <>
           <PageHeading title="Sorteos" subtitle="Publicaciones guardadas y disponibles para vincular." action="Nuevo sorteo" onAction={() => openModal('draws')} />
@@ -335,8 +351,9 @@ function App() {
       </div>
     </main>
 
+    {visualAccount && <VisualAccount account={visualAccount} onClose={() => setVisualAccount(null)} onChanged={refresh} />}
     {modal && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null) }}><form className="modal" onSubmit={save}><div className="modal-head"><div><div className="eyebrow">{modal.id ? 'EDITAR' : 'CREAR'}</div><h2>{modal.type === 'accounts' ? 'Cuenta' : modal.type === 'draws' ? 'Sorteo' : modal.type === 'tags' ? 'Etiquetas disponibles' : modal.type === 'history' ? 'Corregir historial' : 'Asignacion'}</h2></div><IconButton icon={X} title="Cerrar" onClick={() => setModal(null)} /></div>{error && <div className="modal-error"><CircleAlert size={15} />{error}</div>}<div className="modal-body">
-      {modal.type === 'accounts' && <><Field label="Nombre" value={form.name} onChange={value => setForm({ ...form, name: value })} required /><Field label="Argumento de perfil" value={form.profile_arg} onChange={value => setForm({ ...form, profile_arg: value })} placeholder="accounts/cuenta1" required /><p className="field-hint">Se anexa al directorio de perfiles del runner actual.</p></>}
+      {modal.type === 'accounts' && <><Field label="Nombre" value={form.name} onChange={value => setForm({ ...form, name: value, profile_arg: modal.id || form.profile_arg ? form.profile_arg : value })} required /><Field label="Perfil Chrome" value={form.profile_arg} onChange={value => setForm({ ...form, profile_arg: value })} placeholder="cuenta2" required /><p className="field-hint">Se crea el directorio privado si falta. Podés reutilizar un perfil existente que aún no esté registrado.</p></>}
       {modal.type === 'draws' && <><Field label="Nombre" value={form.name} onChange={value => setForm({ ...form, name: value })} required /><Field label="URL de Instagram" value={form.url} onChange={value => setForm({ ...form, url: value })} placeholder="https://www.instagram.com/p/.../" required /><div className="field-row"><Field label="Fecha de finalizacion" type="date" value={form.end_date || ''} onChange={value => setForm({ ...form, end_date: value, end_time: value ? form.end_time : '' })} /><Field label="Hora de finalizacion" type="time" value={form.end_time || ''} onChange={value => setForm({ ...form, end_time: value })} disabled={!form.end_date} /></div><p className="field-hint">Sin hora, se considera el final de ese dia.</p><Field label="N menciones" type="number" min="0" max="100" value={form.tag_count} onChange={value => setForm({ ...form, tag_count: value })} required /><label className="field">Notas<textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={3} /></label></>}
       {modal.type === 'tags' && <><label className="field">Agregar etiquetas<textarea rows={4} value={form.tags_text || ''} onChange={e => setForm({ ...form, tags_text: e.target.value })} placeholder="@usuario1 @usuario2" /></label><div className="tag-library">{data.tags.map(tag => <div className="tag-library-row" key={tag}><span>{tag}</span><IconButton icon={Trash2} title={`Quitar ${tag}`} disabled={busy} onClick={() => perform(() => request(`/tags/${encodeURIComponent(tag)}`, { method: 'DELETE' }))} /></div>)}</div></>}
       {modal.type === 'history' && <><Field label="IDs de tareas terminadas" value={form.task_ids_text || ''} onChange={value => setForm({ ...form, task_ids_text: value })} placeholder="20-24, 9" required /><label className="field">Sorteo real<select value={form.draw_id || ''} onChange={e => setForm({ ...form, draw_id: e.target.value })} required><option value="">Seleccionar</option>{data.draws.map(draw => <option key={draw.id} value={draw.id}>{draw.name}</option>)}</select></label></>}

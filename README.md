@@ -2,6 +2,8 @@
 
 Panel local para administrar cuentas, sorteos, asignaciones y tareas en Linux. El envio sigue usando las funciones existentes de `selenium_runner.py`. El programa no inicia tareas automaticamente al abrirse. Para instalar en Ubuntu, consulta [DESPLIEGUE_LINUX.md](DESPLIEGUE_LINUX.md).
 
+La administracion visual de cuentas desde el panel y el acceso movil se documentan en [VISUAL_SESSIONS.md](VISUAL_SESSIONS.md). Requieren HTTPS valido y configuracion de acceso administrativo antes de habilitar el visor remoto.
+
 ## Instalacion
 
 En Ubuntu, desde la carpeta del proyecto:

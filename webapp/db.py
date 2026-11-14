@@ -35,7 +35,11 @@ def profile_path(profile_arg):
     if len(parts) != 1 or parts[0] in ("", "."):
         raise ValueError("Usá un nombre de perfil, por ejemplo cuenta1")
 
-    return str((accounts_dir() / parts[0]).resolve())
+    root = accounts_dir().resolve()
+    resolved = (root / parts[0]).resolve()
+    if resolved.parent != root:
+        raise ValueError('El perfil debe estar dentro del directorio de cuentas')
+    return str(resolved)
 
 
 class Database:
@@ -73,7 +77,9 @@ class Database:
                     id INTEGER PRIMARY KEY, name TEXT NOT NULL, profile_arg TEXT NOT NULL,
                     profile_path TEXT NOT NULL UNIQUE, archived INTEGER NOT NULL DEFAULT 0,
                     attention_required INTEGER NOT NULL DEFAULT 0,
-                    attention_reason TEXT
+                    attention_reason TEXT,
+                    session_status TEXT NOT NULL DEFAULT 'unknown',
+                    session_checked_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS draws (
                     id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
@@ -113,6 +119,10 @@ class Database:
                     stage TEXT NOT NULL, stage_at TEXT NOT NULL,
                     last_progress_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS admin_events (
+                    id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES accounts(id),
+                    action TEXT NOT NULL, created_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS task_diagnostics (
                     id TEXT PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id),
                     account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -140,6 +150,10 @@ class Database:
                 con.execute('ALTER TABLE accounts ADD COLUMN attention_required INTEGER NOT NULL DEFAULT 0')
             if 'attention_reason' not in columns:
                 con.execute('ALTER TABLE accounts ADD COLUMN attention_reason TEXT')
+            if 'session_status' not in columns:
+                con.execute("ALTER TABLE accounts ADD COLUMN session_status TEXT NOT NULL DEFAULT 'unknown'")
+            if 'session_checked_at' not in columns:
+                con.execute('ALTER TABLE accounts ADD COLUMN session_checked_at TEXT')
             draw_columns = {item['name'] for item in con.execute('PRAGMA table_info(draws)')}
             if 'end_date' not in draw_columns:
                 con.execute('ALTER TABLE draws ADD COLUMN end_date TEXT')

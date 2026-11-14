@@ -1,2 +1,58 @@
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="E:\tobias\INSTAGRAM-BOT\accounts\cuenta2"
-$env:INSTAGRAM_ACCOUNTS_DIR = "E:/tobias/INSTAGRAM-BOT/accounts"
+INICIAR SESION DE INSTAGRAM EN UN PERFIL DEL BOT LINUX CON REALVNC
+
+Ejemplo: cuenta2. Cambia CUENTA si vas a cargar otra cuenta. Estos comandos usan
+el VPS Ubuntu, el usuario jarvisadmin, Chrome en DISPLAY=:99 y el VNC privado
+existente en 127.0.0.1:5901. No usan perfiles del proyecto Windows.
+
+1) En Windows PowerShell, abre el tunel SSH y deja esa ventana abierta:
+
+   ssh -N -o ExitOnForwardFailure=yes -L 15901:127.0.0.1:5901 jarvisadmin@8.198.136.72
+
+   En RealVNC Viewer conecta a 127.0.0.1::5901. Los dos puntos dobles indican
+   el numero de puerto. Autenticate con las credenciales de tu VNC. No abras
+   5901 en el firewall ni conectes RealVNC directamente a la IP publica.
+
+2) En otra terminal SSH del VPS, espera a que no haya tareas activas y ejecuta:
+
+   CUENTA=cuenta2
+   PERFIL="/home/jarvisadmin/instagram-bot-data/accounts/$CUENTA"
+   XAUTHORITY_PATH=/home/jarvisadmin/.Xauthority
+   sudo systemctl stop instagram-bot
+   sudo ss -ltnp | grep ':5901'
+   sudo -u jarvisadmin test -r "$XAUTHORITY_PATH" && echo 'XAUTHORITY legible'
+   pgrep -a -u jarvisadmin -f -- "--user-data-dir=$PERFIL" || true
+
+   El VNC debe escuchar solo en 127.0.0.1:5901. Si XAUTHORITY no es legible,
+   usa la ruta real configurada para DISPLAY=:99 antes de abrir Chrome. Si
+   pgrep muestra otro Chrome con PERFIL, cierralo desde VNC antes de continuar.
+
+3) Crea la carpeta del perfil solo si falta y abre Chrome como jarvisadmin:
+
+   sudo -u jarvisadmin mkdir -m 700 -p -- "$PERFIL"
+   sudo -u jarvisadmin env DISPLAY=:99 XAUTHORITY="$XAUTHORITY_PATH" HOME=/home/jarvisadmin /usr/bin/google-chrome-stable --user-data-dir="$PERFIL" --new-window https://www.instagram.com/accounts/login/
+
+   Deja esta terminal abierta mientras usas Chrome. No ejecutes Chrome como
+   root, no uses --no-sandbox ni abras otra instancia con el mismo PERFIL.
+   No copies cookies o perfiles desde Windows.
+
+4) En RealVNC, inicia sesion manualmente en Instagram y completa cualquier
+   verificacion normal que solicite la plataforma. Comprueba que la sesion
+   queda abierta. No escribas la contrasena en la terminal ni en este archivo.
+
+5) Cierra todas las ventanas de ese Chrome desde RealVNC. En el VPS verifica
+   que no quede otro proceso usando el perfil y arranca el servicio:
+
+   pgrep -a -u jarvisadmin -f -- "--user-data-dir=$PERFIL" || true
+   sudo systemctl start instagram-bot
+   sudo systemctl status instagram-bot --no-pager
+
+6) En el panel web del bot, crea o revisa la cuenta con profile_arg=cuenta2
+   (o el valor exacto de CUENTA). El bot resuelve ese valor al mismo PERFIL.
+   No abras Chrome manualmente mientras una tarea use esa cuenta.
+
+Si RealVNC muestra otra pantalla, comprueba que VNC y Chrome usan el mismo
+DISPLAY=:99. Si aparece un error de permiso X11, revisa XAUTHORITY_PATH y
+sus permisos para jarvisadmin. No reinicies Jarvis, Nginx ni el servicio VNC.
+
+Formato de puerto de RealVNC Viewer:
+https://help.realvnc.com/hc/en-us/articles/38538874117533-RealVNC-Viewer-and-Server-Basics
