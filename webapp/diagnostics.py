@@ -1,4 +1,4 @@
-"""Private, bounded Selenium failure evidence. Never stores page source or exception text."""
+"""Private Selenium failure evidence with redacted exception messages."""
 import os
 import re
 import uuid
@@ -9,10 +9,11 @@ from urllib.parse import urlsplit
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 
+from .comment_field import COMMENT_CANDIDATE_SELECTOR, comment_candidates
 from .db import now, row, rows
 from .settings import debug_dir, diagnostic_retention_days, ensure_private_dir
 
-COMMENT_SELECTOR = 'textarea[aria-label="Añade un comentario..."], textarea[aria-label="Add a comment..."]'
+COMMENT_SELECTOR = COMMENT_CANDIDATE_SELECTOR
 
 
 def safe_url(raw):
@@ -39,6 +40,19 @@ def _safe_title(value, sensitive):
     return ''.join(char for char in title if char.isprintable())[:160]
 
 
+def safe_exception_message(exc):
+    """Keep Selenium's technical message and stack trace while hiding secret values."""
+    message = str(exc)
+    message = re.sub(r'https?://[^\s<>"\']+', lambda match: safe_url(match.group()), message)
+    message = re.sub(r'(?im)^\s*(?:cookie|set-cookie|authorization):.*$', '[cabecera oculta]', message)
+    message = re.sub(r'(?i)\bBearer\s+[^\s,;]+', 'Bearer [oculto]', message)
+    message = re.sub(
+        r'(?i)\b(password|passwd|token|access_token|refresh_token|cookie|sessionid|secret|csrf|xsrf)\b(\s*[:=]\s*)([^\s,;]+)',
+        r'\1\2[oculto]', message)
+    message = re.sub(r'\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b', '[token oculto]', message)
+    return ''.join(char for char in message if char.isprintable() or char in '\n\t')
+
+
 def _probe(driver, selector):
     info = {'page_url': '', 'page_title': '', 'ready_state': 'desconocido',
             'browser_responding': 0, 'matching_elements': None,
@@ -61,7 +75,11 @@ def _probe(driver, selector):
                    body.includes('esta página no está disponible') ||
                    body.includes('esta pagina no esta disponible');
         '''))
-        if selector:
+        if selector == COMMENT_SELECTOR:
+            found = comment_candidates(driver)
+            info['matching_elements'] = len(found)
+            info['visible_elements'] = sum(1 for _, state in found if state['visible'] and state['enabled'])
+        elif selector:
             found = driver.find_elements(By.CSS_SELECTOR, selector)
             info['matching_elements'] = len(found)
             info['visible_elements'] = sum(1 for element in found if element.is_displayed() and element.is_enabled())
@@ -71,7 +89,7 @@ def _probe(driver, selector):
     return info
 
 
-def _category(info, stage, exc):
+def _category(info, stage, exc, operation):
     url = info['page_url'].lower()
     if not info['browser_responding']:
         return 'browser_unresponsive', 'Chrome no responde a los comandos de Selenium.'
@@ -85,15 +103,23 @@ def _category(info, stage, exc):
         return 'post_unavailable', 'Instagram indica que la publicacion no esta disponible.'
     if info['ready_state'] != 'complete':
         return 'page_loading', 'El documento aun no termino de cargar.'
+    if operation == 'driver.get':
+        return 'navigation', 'Fallo la navegacion a la publicacion.'
+    if operation in ('crear_driver', 'document.readyState'):
+        return 'browser_state', 'Fallo la preparacion o consulta del navegador.'
     if info['matching_elements'] == 0:
         return 'selector_missing', 'No se encontro la caja con el selector actual; revisa idioma o interfaz.'
     if info['matching_elements'] and info['visible_elements'] == 0:
         return 'not_interactable', 'La caja existe, pero no esta visible o habilitada.'
+    if operation in ('find_elements', 'comment_field.lookup', 'publish_button.lookup'):
+        return 'element_lookup', 'Fallo la busqueda o espera del elemento.'
+    if operation.endswith(('is_displayed', 'is_enabled', 'confirm')):
+        return 'visibility', 'Fallo la comprobacion de visibilidad o estado editable.'
     if type(exc).__name__ == 'ElementNotInteractableException':
         return 'not_interactable', 'Selenium encontro el elemento, pero no pudo interactuar con el.'
     if info['dialog_count']:
         return 'overlay', 'Hay un dialogo visible que puede impedir la interaccion.'
-    return 'interaction', f'Fallo de Selenium durante {stage}.'
+    return 'interaction', f'Fallo de Selenium durante {stage}, operacion {operation or "desconocida"}.'
 
 
 class DiagnosticStore:
@@ -125,8 +151,11 @@ class DiagnosticStore:
     def record(self, task_id, account_id, stage, exc, driver=None, selector=COMMENT_SELECTOR):
         diagnostic_id = uuid.uuid4().hex
         info = _probe(driver, selector)
-        category, summary = _category(info, stage, exc)
+        operation = str(getattr(exc, 'bot_operation', '') or '')[:100]
+        condition = str(getattr(exc, 'bot_condition', '') or '')[:240]
+        category, summary = _category(info, stage, exc, operation)
         error_type = type(exc).__name__[:80]
+        error_message = safe_exception_message(exc) if isinstance(exc, WebDriverException) else ''
         screenshot_file = None
         page = info['page_url'].lower()
         safe_page = any(part in page for part in ('instagram.com/p/', 'instagram.com/reel/'))
@@ -146,12 +175,14 @@ class DiagnosticStore:
             con.execute('''INSERT INTO task_diagnostics
                 (id,task_id,account_id,created_at,stage,error_type,category,summary,
                  page_url,page_title,ready_state,browser_responding,selector,
-                 matching_elements,visible_elements,dialog_count,screenshot_file)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                 matching_elements,visible_elements,dialog_count,screenshot_file,
+                 operation,condition,error_message)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (diagnostic_id, task_id, account_id, now(), stage[:80], error_type,
                  category, summary, info['page_url'], info['page_title'], info['ready_state'],
                  info['browser_responding'], selector[:240], info['matching_elements'],
-                 info['visible_elements'], info['dialog_count'], screenshot_file))
+                 info['visible_elements'], info['dialog_count'], screenshot_file,
+                 operation, condition, error_message))
         self.prune()
         return diagnostic_id
 
@@ -159,7 +190,8 @@ class DiagnosticStore:
         with self.db.connect() as con:
             return rows(con, '''SELECT id,created_at,stage,error_type,category,summary,page_url,
                 page_title,ready_state,browser_responding,selector,matching_elements,
-                visible_elements,dialog_count,(screenshot_file IS NOT NULL) has_screenshot
+                visible_elements,dialog_count,operation,condition,error_message,
+                (screenshot_file IS NOT NULL) has_screenshot
                 FROM task_diagnostics WHERE task_id=? ORDER BY created_at DESC LIMIT 20''', (task_id,))
 
     def screenshot(self, task_id, diagnostic_id):

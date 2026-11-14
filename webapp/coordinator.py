@@ -207,7 +207,7 @@ class Coordinator:
                     runner.close()
                 except Exception as exc:
                     with self.db.connect() as con:
-                        self._event(con, task_id, 'close_error', str(exc))
+                        self._event(con, task_id, 'close_error', type(exc).__name__)
             with self.lock:
                 self.active_profiles.pop(path, None)
                 self.threads.pop(task_id, None)

@@ -1,13 +1,13 @@
 import re
 import os
 from pathlib import Path
+from .comment_field import COMMENT_CANDIDATE_SELECTOR, ready_comment_field
 from .db import profile_path
 from .settings import accounts_dir, ensure_private_dir
 
 from comentarios import generar_comentario
 from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 
@@ -60,6 +60,8 @@ class SeleniumRunner:
     def _diagnose(self, stage, exc, driver, selector=''):
         if self.diagnostic_sink is not None:
             try:
+                if not getattr(exc, 'bot_operation', None):
+                    exc.bot_operation = stage
                 self.last_diagnostic_id = self.diagnostic_sink(stage, exc, driver, selector)
             except Exception:
                 pass  # Diagnostics must not hide the original Selenium failure.
@@ -138,20 +140,31 @@ class SeleniumRunner:
                 if attempt == 2:
                     self._diagnose('comment_box_refresh', exc, self.driver, '')
                     raise RuntimeError('El textarea cambio repetidamente antes de escribir; revisa la tarea') from exc
-                from selenium_runner import COMMENT_TEXTAREA_SELECTOR
                 self._log('selenium_retry', 'Textarea obsoleto antes de escribir; buscando el elemento actual')
                 self._check_session()
                 try:
                     self.textarea = WebDriverWait(
                         self.driver, 5, ignored_exceptions=(NoSuchElementException, StaleElementReferenceException)
-                    ).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, COMMENT_TEXTAREA_SELECTOR))
-                    )
+                    ).until(ready_comment_field)
                 except Exception as refresh_error:
-                    self._diagnose('comment_box_refresh', refresh_error, self.driver, COMMENT_TEXTAREA_SELECTOR)
+                    self._diagnose('comment_box_refresh', refresh_error, self.driver, COMMENT_CANDIDATE_SELECTOR)
                     raise
+            except Exception as exc:
+                self._diagnose('comment_box_pending_check', exc, self.driver, COMMENT_CANDIDATE_SELECTOR)
+                raise
         if pending and pending.strip():
             raise PendingCommentError('La caja de comentarios conserva texto; posible bloqueo o comentario pendiente')
+        try:
+            tag_name = getattr(self.textarea, 'tag_name', '').lower()
+            if (tag_name and tag_name not in ('textarea', 'input') and
+                    self.textarea.get_attribute('contenteditable') == 'true' and
+                    (self.textarea.get_property('textContent') or '').strip()):
+                raise PendingCommentError('El editor conserva texto; posible comentario pendiente')
+        except PendingCommentError:
+            raise
+        except Exception as exc:
+            self._diagnose('comment_box_pending_check', exc, self.driver, COMMENT_CANDIDATE_SELECTOR)
+            raise
         kwargs = {}
         if self.stage_sink is not None:
             kwargs['on_stage'] = self._mark_stage

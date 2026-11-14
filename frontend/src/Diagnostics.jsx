@@ -14,7 +14,8 @@ const categoryLabels = {
   page_loading: 'Carga incompleta', selector_missing: 'Selector no encontrado',
   post_unavailable: 'Publicación inaccesible',
   not_interactable: 'Elemento no interactuable', overlay: 'Ventana superpuesta',
-  interaction: 'Interacción',
+  element_lookup: 'Búsqueda de elemento', visibility: 'Visibilidad del elemento',
+  browser_state: 'Estado del navegador', interaction: 'Interacción',
 }
 const dateTime = value => value ? new Date(value).toLocaleString('es-AR') : 'Sin registrar'
 
@@ -78,7 +79,8 @@ export default function Diagnostics({ task }) {
       <div className="diagnostics-list">{data.items.map(item => <article className="diagnostic-card" key={item.id}>
         <div className="diagnostic-card-head"><strong>{categoryLabels[item.category] || item.category}</strong><time>{dateTime(item.created_at)}</time></div>
         <p>{item.summary}</p>
-        <dl><div><dt>Etapa</dt><dd>{stageLabels[item.stage] || item.stage}</dd></div><div><dt>Error</dt><dd>{item.error_type}</dd></div><div><dt>URL</dt><dd>{item.page_url || 'No disponible'}</dd></div><div><dt>Título</dt><dd>{item.page_title || 'No disponible'}</dd></div><div><dt>Documento</dt><dd>{item.ready_state}</dd></div><div><dt>Navegador</dt><dd>{item.browser_responding ? 'Responde' : 'No responde'}</dd></div><div><dt>Elementos / visibles</dt><dd>{item.matching_elements ?? '?'} / {item.visible_elements ?? '?'}</dd></div><div><dt>Diálogos</dt><dd>{item.dialog_count ?? '?'}</dd></div></dl>
+        <dl><div><dt>Etapa</dt><dd>{stageLabels[item.stage] || item.stage}</dd></div><div><dt>Operación</dt><dd>{item.operation || 'No registrada'}</dd></div><div><dt>Condición</dt><dd>{item.condition || 'No registrada'}</dd></div><div><dt>Error</dt><dd>{item.error_type}</dd></div><div><dt>Selector</dt><dd>{item.selector || 'No aplica'}</dd></div><div><dt>URL</dt><dd>{item.page_url || 'No disponible'}</dd></div><div><dt>Título</dt><dd>{item.page_title || 'No disponible'}</dd></div><div><dt>Documento</dt><dd>{item.ready_state}</dd></div><div><dt>Navegador</dt><dd>{item.browser_responding ? 'Responde' : 'No responde'}</dd></div><div><dt>Elementos / visibles</dt><dd>{item.matching_elements ?? '?'} / {item.visible_elements ?? '?'}</dd></div><div><dt>Diálogos</dt><dd>{item.dialog_count ?? '?'}</dd></div></dl>
+        {item.error_message && <details><summary>Mensaje técnico de Selenium (datos sensibles ocultos)</summary><pre className="diagnostic-technical">{item.error_message}</pre></details>}
         <small>ID: {item.id}</small>
         {item.has_screenshot ? <button className="button secondary" onClick={() => showScreenshot(item)}>Ver captura</button> : <span className="subtle">Sin captura por privacidad o navegador no disponible</span>}
         {image?.id === item.id && <div className="diagnostic-image"><img src={image.url} alt={`Captura del diagnóstico ${item.id}`} /><button className="button secondary" onClick={() => setImage(null)}>Cerrar captura</button></div>}

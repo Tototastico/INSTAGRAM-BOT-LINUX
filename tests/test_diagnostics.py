@@ -2,11 +2,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException, ElementNotInteractableException
 
 from webapp.api import make_app
 from webapp.db import Database, now
-from webapp.diagnostics import DiagnosticStore, safe_url
+from webapp.diagnostics import DiagnosticStore, safe_exception_message, safe_url
 from webapp.settings import validate_visual_environment
 
 
@@ -70,6 +70,28 @@ def test_failure_capture_is_private_sanitized_and_bound_to_task(tmp_path, monkey
     assert browser.screenshots == 1
     assert store.screenshot(task, diagnostic_id).is_file()
     assert store.screenshot(other, diagnostic_id) is None
+
+
+def test_webdriver_message_and_operation_are_saved_with_secrets_redacted(tmp_path, monkeypatch):
+    monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
+    db, task, _, account = seeded_database(tmp_path)
+    error = TimeoutException(
+        'unknown error during click\nURL https://www.instagram.com/p/ABC/?token=secret\n'
+        'Cookie: sessionid=private\nAuthorization: Bearer private')
+    error.bot_operation = 'comment_field.click'
+    error.bot_condition = 'editor reconocido visible y habilitado'
+    DiagnosticStore(db).record(task, account, 'comment_box_lookup', error,
+                               Browser('https://www.instagram.com/p/ABC/'))
+    item = DiagnosticStore(db).for_task(task)[0]
+    assert item['operation'] == 'comment_field.click'
+    assert item['condition'] == 'editor reconocido visible y habilitado'
+    assert 'unknown error during click' in item['error_message']
+    assert 'https://www.instagram.com/p/ABC/' in item['error_message']
+    assert 'secret' not in item['error_message']
+    assert 'private' not in item['error_message']
+    assert 'sessionid' not in item['error_message']
+    assert 'Authorization' not in item['error_message']
+    assert 'secret' not in safe_exception_message(error)
 
 
 def test_login_skips_capture_and_retention_removes_old_evidence(tmp_path, monkeypatch):
@@ -168,18 +190,14 @@ def test_comment_box_timeout_reports_exact_stage_without_real_instagram(monkeypa
         def find_element(self, by, value): return self
         def click(self): pass
 
-    class Actions:
-        def __init__(self, driver): pass
-        def move_by_offset(self, *args): return self
-        def click(self): return self
-        def perform(self): pass
-
     class Wait:
         def __init__(self, driver, seconds): pass
-        def until(self, condition): raise TimeoutException('private-url?token=secret')
+        def until(self, condition):
+            if getattr(condition, '__name__', '') == 'ready_comment_field':
+                raise TimeoutException('private-url?token=secret')
+            return True
 
     monkeypatch.setattr(selenium_runner, 'crear_driver', lambda profile: Driver())
-    monkeypatch.setattr(selenium_runner, 'ActionChains', Actions)
     monkeypatch.setattr(selenium_runner, 'WebDriverWait', Wait)
     monkeypatch.setattr(selenium_runner.time, 'sleep', lambda seconds: None)
     stages, failures, events = [], [], []
@@ -194,6 +212,45 @@ def test_comment_box_timeout_reports_exact_stage_without_real_instagram(monkeypa
     assert failures[0][0:2] == ('comment_box_lookup', 'TimeoutException')
     assert 'textarea' in failures[0][2]
     assert 'secret' not in str(events)
+
+
+def test_page_ready_failure_records_exact_operation_and_condition(monkeypatch):
+    import selenium_runner
+
+    class Driver:
+        def get(self, url): pass
+        def execute_script(self, script):
+            raise WebDriverException('Chrome rejected readyState command')
+
+    monkeypatch.setattr(selenium_runner, 'crear_driver', lambda profile: Driver())
+    failures = []
+    success, _, _ = selenium_runner.acceder_caja(
+        'https://www.instagram.com/p/ABC/', 'cuenta1',
+        on_diagnostic=lambda stage, exc, driver, selector: failures.append(
+            (stage, exc.bot_operation, exc.bot_condition, selector, str(exc))))
+    assert not success
+    assert failures[0][0:3] == ('page_ready', 'document.readyState', 'document.readyState == complete')
+    assert failures[0][3] == ''
+    assert 'Chrome rejected readyState command' in failures[0][4]
+
+
+def test_wrong_comment_field_is_never_typed_into(monkeypatch):
+    import selenium_runner
+
+    class WrongField:
+        def __init__(self): self.typed = []
+        def send_keys(self, value): self.typed.append(value)
+
+    field = WrongField()
+    monkeypatch.setattr(selenium_runner, 'confirm_comment_field', lambda element: False)
+    failures = []
+    with pytest.raises(ElementNotInteractableException):
+        selenium_runner.comentar_en_post(
+            'texto de prueba', object(), field,
+            on_diagnostic=lambda stage, exc, driver, selector: failures.append(
+                (stage, exc.bot_operation)))
+    assert field.typed == []
+    assert failures == [('comment_typing', 'comment_field.confirm')]
 
 
 def test_visible_chrome_options_do_not_enable_headless(tmp_path, monkeypatch):

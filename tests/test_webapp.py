@@ -369,13 +369,24 @@ def test_stale_textarea_is_relocated_only_before_typing(monkeypatch):
             raise StaleElementReferenceException('elemento reemplazado')
 
     class NewTextarea:
+        tag_name = 'textarea'
+
         def get_property(self, name):
             return ''
+
+        def get_attribute(self, name):
+            return 'Add a comment' if name == 'aria-label' else None
+
+        def is_displayed(self):
+            return True
+
+        def is_enabled(self):
+            return True
 
     current = NewTextarea()
     driver = types.SimpleNamespace(
         current_url='https://www.instagram.com/p/ABC/',
-        find_element=lambda by, selector: (calls.append(('find', by, selector)) or current),
+        find_elements=lambda by, selector: (calls.append(('find', by, selector)) or [current]),
         quit=lambda: None,
     )
     monkeypatch.setitem(sys.modules, 'selenium_runner', types.SimpleNamespace(
@@ -399,10 +410,13 @@ def test_relocated_pending_text_still_prevents_post(monkeypatch):
         def get_property(self, name):
             raise StaleElementReferenceException('elemento reemplazado')
 
-    current = types.SimpleNamespace(get_property=lambda name: 'comentario anterior')
+    current = types.SimpleNamespace(
+        tag_name='textarea', get_property=lambda name: 'comentario anterior',
+        get_attribute=lambda name: 'Add a comment' if name == 'aria-label' else None,
+        is_displayed=lambda: True, is_enabled=lambda: True)
     driver = types.SimpleNamespace(
         current_url='https://www.instagram.com/p/ABC/',
-        find_element=lambda by, selector: current,
+        find_elements=lambda by, selector: [current],
         quit=lambda: None,
     )
     posts = []
@@ -458,47 +472,35 @@ def test_open_logs_retry_and_keeps_specific_failure(monkeypatch):
     runner.close()
 
 
-def test_legacy_textarea_retry_emits_log_and_keeps_open_sequence(monkeypatch):
+def test_comment_editor_retry_avoids_page_body_clicks(monkeypatch):
     import selenium_runner as legacy
 
-    old = object()
-    fresh = object()
-    found = iter((old, fresh))
     calls = []
 
-    class Actions:
-        def move_by_offset(self, *args):
-            return self
-
-        def move_to_element(self, element):
-            calls.append(('move', element))
-            return self
-
+    class Old:
         def click(self):
-            return self
+            raise StaleElementReferenceException('reemplazado')
 
-        def perform(self):
-            calls.append(('perform',))
+    class Fresh:
+        def click(self):
+            calls.append(('editor_click',))
+
+    old, fresh = Old(), Fresh()
+    found = iter((old, fresh))
 
     class Driver:
         def get(self, url):
             calls.append(('get', url))
 
-        def maximize_window(self):
-            pass
-
         def execute_script(self, script, *args):
-            if args and args[0] is old:
-                raise StaleElementReferenceException('reemplazado')
-
-        def find_element(self, by, value):
-            return types.SimpleNamespace(click=lambda: calls.append(('body_click',)))
+            return 'complete' if 'readyState' in script else True
 
     driver = Driver()
     monkeypatch.setattr(legacy, 'crear_driver', lambda profile: driver)
-    monkeypatch.setattr(legacy, 'ActionChains', lambda used_driver: Actions())
+    monkeypatch.setattr(legacy, 'ready_comment_field', lambda used_driver: next(found))
+    monkeypatch.setattr(legacy, 'confirm_comment_field', lambda element: element is fresh)
     monkeypatch.setattr(legacy, 'WebDriverWait', lambda used_driver, timeout: types.SimpleNamespace(
-        until=lambda condition: next(found)))
+        until=lambda condition: condition(used_driver)))
     monkeypatch.setattr(legacy.time, 'sleep', lambda seconds: None)
     events = []
     success, used_driver, textarea = legacy.acceder_caja(
@@ -507,7 +509,7 @@ def test_legacy_textarea_retry_emits_log_and_keeps_open_sequence(monkeypatch):
     )
     assert success and used_driver is driver and textarea is fresh
     assert calls[0] == ('get', 'https://www.instagram.com/p/ABC/')
-    assert calls[-2:] == [('move', fresh), ('perform',)]
+    assert calls[-1:] == [('editor_click',)]
     assert events[0][0] == 'selenium_retry'
 
 

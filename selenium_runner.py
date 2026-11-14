@@ -1,18 +1,26 @@
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 import time
 import random
-from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException
-from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import (ElementNotInteractableException,
+                                        StaleElementReferenceException, NoSuchElementException)
 from webapp.chrome_binary import chrome_binary_and_major
+from webapp.comment_field import (COMMENT_CANDIDATE_SELECTOR, confirm_comment_field,
+                                  ready_comment_field)
 from webapp.db import profile_path
 from webapp.settings import ensure_private_dir, headless, validate_visual_environment
 from pathlib import Path
 
-COMMENT_TEXTAREA_SELECTOR = 'textarea[aria-label="Añade un comentario..."], textarea[aria-label="Add a comment..."]'
+COMMENT_TEXTAREA_SELECTOR = COMMENT_CANDIDATE_SELECTOR
+
+
+def _operation_error(exc, operation, condition=''):
+    if not getattr(exc, 'bot_operation', None):
+        exc.bot_operation = operation
+    exc.bot_condition = condition
+    return exc
 
 
 def report(message, on_log=None, kind='selenium_info'):
@@ -45,81 +53,80 @@ def acceder_caja(url_post, nombre_cuenta, on_log=None, on_stage=None, on_diagnos
     print(f"[+] Iniciando sesión con la cuenta: {nombre_cuenta}")
     driver = None
     stage = 'chrome_start'
+    operation = 'crear_driver'
+    condition = ''
     try:
         if on_stage:
             on_stage(stage)
         driver = crear_driver(nombre_cuenta)
         stage = 'navigation'
+        operation = 'driver.get'
         if on_stage:
             on_stage(stage)
         driver.get(url_post)
         stage = 'page_ready'
+        operation = 'document.readyState'
+        condition = 'document.readyState == complete'
         if on_stage:
             on_stage(stage)
-        driver.maximize_window()
-        actions = ActionChains(driver)
-        time.sleep(2)
-        driver.execute_script("window.focus(); document.activeElement.blur();")
-        body = driver.find_element(By.TAG_NAME, "body")
-        actions.move_by_offset(10, 10).click().perform()
-        body.click()
-
-        time.sleep(random.uniform(5, 8))
+        WebDriverWait(driver, 15).until(
+            lambda current: current.execute_script('return document.readyState') == 'complete')
         stage = 'comment_box_lookup'
+        operation = 'find_elements'
+        condition = 'editor de comentario visible y habilitado'
         if on_stage:
             on_stage(stage)
         wait = WebDriverWait(driver, 15)
-
-        last_error = None
         for intento in range(3):
             try:
-                textarea = wait.until(EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, COMMENT_TEXTAREA_SELECTOR)
-                ))
-                driver.execute_script("arguments[0].scrollIntoView(true);", textarea)
-                driver.execute_script("arguments[0].focus();", textarea)
-                actions.move_to_element(textarea).click().perform()
-                time.sleep(0.5)
+                textarea = wait.until(ready_comment_field)
+                operation = 'comment_field.click'
+                condition = 'editor reconocido visible y habilitado'
+                textarea.click()
+                operation = 'comment_field.focus_check'
+                condition = 'document.activeElement == editor de comentario'
+                if not confirm_comment_field(textarea) or not driver.execute_script(
+                        'return document.activeElement === arguments[0]', textarea):
+                    raise ElementNotInteractableException('El editor de comentario no quedo enfocado')
                 if on_stage:
                     on_stage('comment_box_ready')
                 return True, driver, textarea
-            except (StaleElementReferenceException, NoSuchElementException) as e:
-                last_error = e
-                report(f"[!] Reintentando encontrar textarea (intento {intento + 1}/3): {type(e).__name__}",
+            except (StaleElementReferenceException, NoSuchElementException) as exc:
+                if intento == 2:
+                    raise
+                report(f"[!] Reintentando encontrar editor (intento {intento + 1}/3): {type(exc).__name__}",
                        on_log, 'selenium_retry')
                 time.sleep(2)
-        else:
-            if on_diagnostic and last_error:
-                on_diagnostic(stage, last_error, driver, COMMENT_TEXTAREA_SELECTOR)
-            report(f"[X] No se pudo encontrar el textarea luego de varios intentos: {type(last_error).__name__}",
-                   on_log, 'selenium_error')
-            return False, driver, None
-
-        return True, driver, textarea
 
     except Exception as e:
+        _operation_error(e, operation, condition)
         if on_diagnostic:
             on_diagnostic(stage, e, driver, COMMENT_TEXTAREA_SELECTOR if stage == 'comment_box_lookup' else '')
-        report(f"[!] Error al abrir la caja de comentarios durante {stage}: {type(e).__name__}",
+        report(f"[!] Error al abrir la caja de comentarios durante {stage}, operacion {operation}: {type(e).__name__}",
                on_log, 'selenium_error')
         return False, driver, None
-    #finally:
-    #    time.sleep(random.uniform(4, 6))
-    #    driver.quit()
 
 
 def comentar_en_post(comentario, driver, textarea, on_stage=None, on_diagnostic=None):
     stage = 'comment_typing'
+    operation = 'comment_field.confirm'
+    condition = 'editor de comentario visible y habilitado'
     try:
         if on_stage:
             on_stage(stage)
+        if not confirm_comment_field(textarea) or not driver.execute_script(
+                'return document.activeElement === arguments[0]', textarea):
+            raise ElementNotInteractableException('No se confirma el foco del editor de comentario')
         wait = WebDriverWait(driver, 5)
         for letra in comentario:
+            operation = 'comment_field.send_keys'
             textarea.send_keys(letra)
             time.sleep(random.uniform(0.05, 0.15))
 
         time.sleep(random.uniform(1, 2))
         stage = 'publish_button_lookup'
+        operation = 'publish_button.lookup'
+        condition = 'boton Publicar visible y habilitado'
         if on_stage:
             on_stage(stage)
         publicar_btn = wait.until(EC.element_to_be_clickable(
@@ -128,11 +135,13 @@ def comentar_en_post(comentario, driver, textarea, on_stage=None, on_diagnostic=
         driver.execute_script("arguments[0].scrollIntoView(true);", publicar_btn)
         time.sleep(0.5)
         stage = 'publish_click'
+        operation = 'publish_button.click'
         if on_stage:
             on_stage(stage)
         driver.execute_script("arguments[0].click();", publicar_btn)
         print("[✓] Comentario enviado correctamente.")
     except Exception as exc:
+        _operation_error(exc, operation, condition)
         if on_diagnostic:
             selector = 'div[role="button"]' if stage == 'publish_button_lookup' else ''
             on_diagnostic(stage, exc, driver, selector)
