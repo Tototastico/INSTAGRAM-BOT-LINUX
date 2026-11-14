@@ -79,7 +79,9 @@ class Database:
                     attention_required INTEGER NOT NULL DEFAULT 0,
                     attention_reason TEXT,
                     session_status TEXT NOT NULL DEFAULT 'unknown',
-                    session_checked_at TEXT
+                    session_checked_at TEXT,
+                    session_user TEXT NOT NULL DEFAULT '',
+                    session_reason TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS draws (
                     id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
@@ -154,6 +156,10 @@ class Database:
                 con.execute("ALTER TABLE accounts ADD COLUMN session_status TEXT NOT NULL DEFAULT 'unknown'")
             if 'session_checked_at' not in columns:
                 con.execute('ALTER TABLE accounts ADD COLUMN session_checked_at TEXT')
+            if 'session_user' not in columns:
+                con.execute("ALTER TABLE accounts ADD COLUMN session_user TEXT NOT NULL DEFAULT ''")
+            if 'session_reason' not in columns:
+                con.execute("ALTER TABLE accounts ADD COLUMN session_reason TEXT NOT NULL DEFAULT ''")
             draw_columns = {item['name'] for item in con.execute('PRAGMA table_info(draws)')}
             if 'end_date' not in draw_columns:
                 con.execute('ALTER TABLE draws ADD COLUMN end_date TEXT')

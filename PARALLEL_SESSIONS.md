@@ -1,0 +1,30 @@
+# Concurrencia y verificación de cuentas
+
+El límite predeterminado sigue siendo **1**. En Inicio o Actividad, `Máximo de navegadores` permite elegir 1 a 4 o `Automático`. El cambio se guarda en SQLite. `MAX_CONCURRENT_BROWSERS` sigue siendo el valor inicial si todavía no hay una elección guardada. La pantalla muestra navegadores activos, tareas y motivo de espera. El coordinador recorre toda la cola: una tarea de una cuenta ocupada no bloquea otra cuenta disponible.
+
+Cada perfil tiene una única tarea o sesión visual activa en el coordinador y el mismo bloqueo `*.lock` en Linux. El navegador visual consume un cupo. Antes de abrir otro Chrome se consulta `MemAvailable`, la memoria RSS observada de procesos Chrome y la carga de CPU. Se reserva memoria para el sistema. En automático el techo es 4; la admisión por recursos puede dejar tareas en cola incluso con cupos libres. El planificador reevalúa la cola cada 15 segundos. El servicio debe seguir con **un worker**, sin `--reload`, y bajo el `flock` de `deploy/start.sh`. SQLite usa conexiones separadas por operación, WAL y espera de 30 segundos.
+
+`Verificar conexión` abre el perfil persistente una sola vez, protegido por los mismos bloqueos, inspecciona la página y cierra Chrome. Sólo declara `connected` cuando identifica un enlace de perfil de la navegación. Compara el usuario si el nombre registrado tiene forma de usuario de Instagram. Los nombres descriptivos con espacios no se interpretan como identificadores. `unknown` y `verification_error` no equivalen a sesión caducada. La tarjeta muestra usuario detectado, motivo y fecha. Una tarea se pausa sólo ante una señal explícita de login, verificación o usuario incorrecto; no se pulsa ningún control de autenticación. La reanudación es manual tras reconectar y revisar el perfil.
+
+Los diagnósticos de tareas usan la misma cookie administrativa corta que el navegador visual. Ya no se solicita ni se envía `BOT_DIAGNOSTICS_TOKEN`. Si todavía no hay sesión administrativa, el panel pide la clave administrativa existente una vez. El backend rechaza solicitudes anónimas y mantiene las capturas privadas. Nginx Basic Auth por sí sola no da al backend una identidad verificable; no se confía en encabezados que un cliente pueda falsificar.
+
+## Actualización de Ubuntu
+
+No ejecutar durante una tarea activa. Revisar primero el estado y tomar un respaldo consistente de SQLite con su API de backup. No copiar un archivo WAL activo con `cp`.
+
+```bash
+cd /opt/instagram-bot
+git fetch origin main
+git switch main
+git pull --ff-only origin main
+.venv/bin/python -m pytest -q
+cd frontend && npm ci && npm run build && cd ..
+sudo systemctl restart instagram-bot
+sudo systemctl status instagram-bot --no-pager
+```
+
+El primer arranque añade `session_user` y `session_reason` a la base sin alterar cuentas, perfiles ni sesiones Chrome. Mantener el servicio con un worker y `deploy/start.sh` o un `flock` equivalente. No cambiar Nginx ni VNC para esta mejora. La verificación en el VPS con cuentas reales sigue pendiente; probar una cuenta supervisada antes de subir el límite.
+
+## Vuelta atrás
+
+Detener nuevas tareas, esperar o cancelar las activas, respaldar la base con SQLite, detener el servicio, volver al commit anterior y compilar su frontend. Si se restaura la base, usar el respaldo del mismo release. Las tareas cuyo comentario pudo haberse enviado se revisan manualmente antes de reanudar. No restaurar perfiles Chrome con el navegador abierto.

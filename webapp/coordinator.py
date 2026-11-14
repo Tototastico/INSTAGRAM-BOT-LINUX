@@ -5,7 +5,8 @@ from selenium.common.exceptions import WebDriverException
 
 from .db import now, row, rows
 from .diagnostics import DiagnosticStore
-from .runner import PendingCommentError, SeleniumRunner, compose_comment
+from .runner import PendingCommentError, SeleniumRunner, SessionUnavailableError, compose_comment
+from .resources import can_start, snapshot
 from .settings import max_browsers
 
 
@@ -54,13 +55,15 @@ class Coordinator:
         with self.lock, self.db.connect() as con:
             if self.stopping:
                 raise ValueError('El servicio se esta deteniendo')
-            assignment = row(con, '''SELECT s.id,s.account_id,s.draw_id,a.attention_required FROM assignments s
+            assignment = row(con, '''SELECT s.id,s.account_id,s.draw_id,a.attention_required,a.session_status FROM assignments s
                 JOIN accounts a ON a.id=s.account_id JOIN draws d ON d.id=s.draw_id
                 WHERE s.id=? AND s.archived=0 AND a.archived=0 AND d.archived=0''', (assignment_id,))
             if not assignment:
                 raise ValueError('Asignacion inexistente o archivada')
             if assignment['attention_required']:
                 raise ValueError('La cuenta requiere revision antes de iniciar otra tarea')
+            if assignment['session_status'] == 'wrong_account':
+                raise ValueError('La verificacion detecto una cuenta de Instagram diferente')
             existing = row(con, f"SELECT id FROM tasks WHERE assignment_id=? AND status IN ({','.join('?' for _ in ACTIVE)})",
                            (assignment_id, *ACTIVE))
             if existing:
@@ -86,10 +89,12 @@ class Coordinator:
             elif action == 'resume' and state in ('paused', 'interrupted'):
                 if self.stopping:
                     raise ValueError('El servicio se esta deteniendo')
-                account = row(con, '''SELECT a.attention_required FROM tasks t
+                account = row(con, '''SELECT a.attention_required,a.session_status FROM tasks t
                     JOIN accounts a ON a.id=t.account_id WHERE t.id=?''', (task_id,))
                 if account['attention_required']:
                     raise ValueError('La cuenta requiere revision antes de reanudar')
+                if account['session_status'] == 'wrong_account':
+                    raise ValueError('Verifica el usuario de Instagram antes de reanudar')
                 self._status(con, task_id, 'queued', 'Reanudacion manual solicitada')
             elif action == 'cancel' and state == 'running':
                 self._status(con, task_id, 'cancelling', 'Cancelacion solicitada')
@@ -103,11 +108,13 @@ class Coordinator:
         with self.lock, self.db.connect() as con:
             if self.stopping:
                 return
+            limit = self.browser_limit(con)
+            metrics = snapshot()
             candidates = rows(con, '''SELECT t.id, a.profile_path FROM tasks t
                 JOIN accounts a ON a.id=t.account_id
                 WHERE t.status='queued' AND a.attention_required=0 ORDER BY t.id''')
             for task in candidates:
-                if len(self.active_profiles) >= max_browsers():
+                if len(self.active_profiles) >= limit or not can_start(metrics, len(self.active_profiles)):
                     break
                 path = task['profile_path']
                 if path in self.active_profiles:
@@ -118,10 +125,39 @@ class Coordinator:
                 self.threads[task['id']] = thread
                 thread.start()
 
+    def browser_limit(self, con=None):
+        if con is None:
+            with self.db.connect() as own:
+                return self.browser_limit(own)
+        value = row(con, "SELECT value FROM settings WHERE key='browser_limit'")
+        configured = value['value'] if value else str(max_browsers())
+        return 4 if configured == 'auto' else int(configured)
+
+    def scheduler_status(self):
+        with self.lock, self.db.connect() as con:
+            metrics = snapshot()
+            limit = self.browser_limit(con)
+            active = set(self.active_profiles)
+            queued = rows(con, "SELECT t.id,a.profile_path FROM tasks t JOIN accounts a ON a.id=t.account_id WHERE t.status='queued' ORDER BY t.id")
+            reasons = {}
+            for task in queued:
+                if task['profile_path'] in active:
+                    reasons[task['id']] = 'Cuenta ocupada'
+                elif len(active) >= limit:
+                    reasons[task['id']] = 'Límite de navegadores'
+                elif not can_start(metrics, len(active)):
+                    reasons[task['id']] = 'Esperando recursos'
+                else:
+                    reasons[task['id']] = 'Próxima en cola'
+            return {'active_browsers': len(active), 'running_tasks': sum(isinstance(v, int) for v in self.active_profiles.values()),
+                    'queued_tasks': len(queued), 'limit': limit, 'memory_available_mb': metrics['available_mb'],
+                    'chrome_memory_mb': metrics['chrome_mb'], 'cpu_load': metrics['cpu_load'], 'reasons': reasons}
+
     def _load_task(self, task_id):
         with self.db.connect() as con:
             return row(con, '''SELECT t.*, s.duration_minutes, s.comments_per_minute,
-                d.tag_count, s.extra_text, s.tags_json, a.profile_arg, d.url
+                d.tag_count, s.extra_text, s.tags_json, a.profile_arg, a.name account_name,
+                a.session_status, d.url
                 FROM tasks t JOIN assignments s ON s.id=t.assignment_id
                 JOIN accounts a ON a.id=t.account_id JOIN draws d ON d.id=t.draw_id
                 WHERE t.id=?''', (task_id,))
@@ -134,6 +170,8 @@ class Coordinator:
             base_elapsed = task['elapsed_seconds']
             last_saved = segment_start
             runner = self.runner_factory()
+            if hasattr(runner, 'set_expected_account'):
+                runner.set_expected_account(task['account_name'] if task['session_status'] == 'connected' else '')
             if hasattr(runner, 'set_event_sink'):
                 runner.set_event_sink(lambda kind, message: self._runner_event(task_id, kind, message))
             if hasattr(runner, 'set_stage_sink'):
@@ -190,6 +228,9 @@ class Coordinator:
                 except PendingCommentError as exc:
                     self._pause_for_attention(task_id, exc, base_elapsed + self.clock() - segment_start)
                     break
+                except SessionUnavailableError as exc:
+                    self._pause_session(task_id, exc, base_elapsed + self.clock() - segment_start)
+                    break
                 except Exception as exc:
                     self._fail(task_id, exc, base_elapsed + self.clock() - segment_start, 'Comentario')
                     break
@@ -198,6 +239,8 @@ class Coordinator:
                     self._event(con, task_id, 'clicked', 'Clic en Publicar; confirmacion no verificada')
                 self._stage(task_id, 'publish_click', progress=True)
                 next_attempt = self.clock() + interval
+        except SessionUnavailableError as exc:
+            self._pause_session(task_id, exc, base_elapsed + self.clock() - segment_start if 'base_elapsed' in locals() else 0)
         except Exception as exc:
             self._fail(task_id, exc, base_elapsed + self.clock() - segment_start if 'base_elapsed' in locals() else 0,
                        'Inicio o ejecucion')
@@ -254,3 +297,15 @@ class Coordinator:
                 WHERE account_id=? AND status='queued' ''', (account_id,))
             for pending in queued:
                 self._status(con, pending['id'], 'paused', 'Pausada: la cuenta requiere revision')
+
+    def _pause_session(self, task_id, exc, elapsed):
+        with self.lock, self.db.connect() as con:
+            task = row(con, 'SELECT account_id FROM tasks WHERE id=?', (task_id,))
+            con.execute('''UPDATE accounts SET session_status=?,session_checked_at=?,
+                session_user=?,session_reason=? WHERE id=?''',
+                (exc.state, now(), exc.detected, exc.reason, task['account_id']))
+            con.execute('UPDATE tasks SET last_error=?,elapsed_seconds=? WHERE id=?',
+                        (str(exc), max(0, elapsed), task_id))
+            self._status(con, task_id, 'paused', 'Pausada: revisar sesion de Instagram')
+            for pending in rows(con, "SELECT id FROM tasks WHERE account_id=? AND status='queued'", (task['account_id'],)):
+                self._status(con, pending['id'], 'paused', 'Pausada: revisar sesion de Instagram')

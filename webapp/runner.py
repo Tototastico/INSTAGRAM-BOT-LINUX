@@ -5,6 +5,7 @@ from pathlib import Path
 from .comment_field import COMMENT_CANDIDATE_SELECTOR, ready_comment_field
 from .db import profile_path
 from .settings import accounts_dir, ensure_private_dir
+from .session_probe import probe
 
 from comentarios import generar_comentario
 from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
@@ -14,6 +15,12 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 class PendingCommentError(RuntimeError):
     pass
+
+
+class SessionUnavailableError(RuntimeError):
+    def __init__(self, state, detected='', reason=''):
+        self.state, self.detected, self.reason = state, detected, reason
+        super().__init__(reason or state)
 
 
 def parse_comment_count(value):
@@ -41,6 +48,10 @@ class SeleniumRunner:
         self.diagnostic_sink = None
         self.stage_sink = None
         self.last_diagnostic_id = None
+        self.expected_account = ''
+
+    def set_expected_account(self, name):
+        self.expected_account = name
 
     def set_event_sink(self, sink):
         self.event_sink = sink
@@ -81,6 +92,9 @@ class SeleniumRunner:
 
         if os.name == 'posix':
             import fcntl
+            from .visual_sessions import profile_process_running
+            if profile_process_running(Path(profile_path(profile_arg))):
+                raise RuntimeError('Hay un Chrome manual abierto con este perfil')
             ensure_private_dir(accounts_dir())
             lock_path = accounts_dir() / (Path(profile_path(profile_arg)).name + '.lock')
             self.profile_lock = open(lock_path, 'a+b')
@@ -184,17 +198,9 @@ class SeleniumRunner:
     def _check_session(self):
         if self.driver is None:
             return
-        try:
-            url = (getattr(self.driver, 'current_url', '') or '').lower()
-        except Exception as exc:
-            self._diagnose('session_check', exc, self.driver)
-            raise
-        if '/accounts/login' in url:
-            error = RuntimeError('Sesion vencida: inicia sesion manualmente en el perfil')
-            self._diagnose('session_check', error, self.driver)
-            raise error
-        if '/challenge' in url or '/checkpoint' in url:
-            error = RuntimeError('Instagram solicita una verificacion manual')
+        state, detected, reason = probe(self.driver, self.expected_account)
+        if state in ('session_expired', 'not_signed_in', 'verification_required', 'wrong_account'):
+            error = SessionUnavailableError(state, detected, reason)
             self._diagnose('session_check', error, self.driver)
             raise error
 

@@ -15,7 +15,7 @@ async function api(path, options = {}) {
 const labels = {
   connected: 'Sesión conectada', not_signed_in: 'Sin iniciar sesión',
   verification_required: 'Requiere verificación', session_expired: 'Sesión caducada',
-  verification_error: 'Error al verificar', unknown: 'No verificada',
+  verification_error: 'No se pudo verificar', unknown: 'No verificada', wrong_account: 'Cuenta incorrecta',
   verification_in_progress: 'Verificación en curso', in_use_by_task: 'En uso por una tarea',
 }
 
@@ -105,15 +105,16 @@ export default function VisualAccount({ account, onClose, onChanged }) {
         })
       }}><label>Clave de administración visual<input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label><button className="button primary" disabled={busy}>Desbloquear</button></form>}
       {auth?.authenticated && <>
-        <div className="visual-toolbar"><div><strong>{labels[session?.session_status] || 'No verificada'}</strong><small>Última verificación: {session?.session_checked_at ? new Date(session.session_checked_at).toLocaleString() : 'Nunca'}</small><small>{session?.visual?.open ? connection : 'Navegador cerrado'}</small></div>
+        <div className="visual-toolbar"><div><strong>{labels[session?.session_status] || 'No verificada'}</strong><small>Última verificación: {session?.session_checked_at ? new Date(session.session_checked_at).toLocaleString() : 'Nunca'}</small><small>{session?.visual?.open ? connection : 'Navegador cerrado'}</small><small>Usuario detectado: {session?.session_user || 'No identificado'}</small><small>Perfil: {session?.profile_path || account.profile_arg}</small><small>{session?.session_reason || 'Sin diagnóstico de sesión'}</small></div>
           <div className="visual-actions">
             {!session?.visual?.open && <button className="button primary" disabled={busy || session?.session_status === 'in_use_by_task' || session?.session_status === 'verification_in_progress'} onClick={() => action(async () => {
               await mutate(`/accounts/${account.id}/session/open`)
               setSession(value => ({ ...value, visual: { open: true } }))
             })}>{['session_expired', 'verification_required'].includes(session?.session_status) ? 'Reconectar' : 'Iniciar sesión'}</button>}
             <button className="button secondary" disabled={busy || !!session?.visual?.open || session?.session_status === 'in_use_by_task' || session?.session_status === 'verification_in_progress'} onClick={() => action(async () => {
+              setSession(value => ({ ...value, session_status: 'verification_in_progress' }))
               const result = await mutate(`/accounts/${account.id}/session/verify`)
-              setSession(value => ({ ...value, session_status: result.status, session_checked_at: new Date().toISOString() }))
+              setSession(value => ({ ...value, ...result }))
             })}>Verificar conexión</button>
             {session?.visual?.open && <button className="button secondary" disabled={busy} onClick={() => setReconnect(x => x + 1)}>Reconectar visor</button>}
             {session?.visual?.open && <button className="button secondary" disabled={busy} onClick={() => action(async () => {

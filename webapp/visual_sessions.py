@@ -17,6 +17,7 @@ except ImportError:  # Linux-only feature; keep the Windows test/import path usa
 
 from .db import now, row, profile_path
 from .settings import accounts_dir, data_dir, ensure_private_dir
+from .session_probe import probe
 
 
 class VisualSessionError(RuntimeError):
@@ -117,6 +118,10 @@ class VisualSessions:
                 busy = con.execute("SELECT 1 FROM tasks WHERE account_id=? AND status IN ('running','pausing','cancelling')", (account_id,)).fetchone()
                 if busy or str(profile) in self.coordinator.active_profiles:
                     raise VisualSessionError('La cuenta esta en uso por una tarea o sesion visual')
+                from .resources import can_start, snapshot
+                if len(self.coordinator.active_profiles) >= self.coordinator.browser_limit(con) or not can_start(
+                        snapshot(), len(self.coordinator.active_profiles)):
+                    raise VisualSessionError('No hay capacidad para otro navegador; espera o aumenta el limite')
                 if profile_process_running(profile):
                     raise VisualSessionError('Hay un Chrome manual abierto con este perfil')
                 self.coordinator.active_profiles[str(profile)] = f'visual:{account_id}'
@@ -290,16 +295,19 @@ class VisualSessions:
     def verify(self, account_id, driver_factory=None):
         """Read the login state once; never submit forms or copy browser storage."""
         from selenium import webdriver
-        from selenium.webdriver.common.by import By
-
         profile, lock_file = self._reserve(account_id)
         with self.lock:
             self.checking.add(account_id)
         driver = None
         state = 'verification_error'
+        detected = ''
+        reason = 'No se pudo iniciar la verificacion'
         try:
+            with self.db.connect() as con:
+                expected = row(con, 'SELECT name FROM accounts WHERE id=?', (account_id,))['name']
             if not profile.is_dir():
                 state = 'not_signed_in'
+                reason = 'El perfil Chrome aun no existe'
             else:
                 options = webdriver.ChromeOptions()
                 options.binary_location = os.environ.get('CHROME_BINARY', '/usr/bin/google-chrome-stable')
@@ -309,19 +317,15 @@ class VisualSessions:
                 driver = (driver_factory or webdriver.Chrome)(options=options)
                 driver.set_page_load_timeout(30)
                 driver.get('https://www.instagram.com/')
-                url = driver.current_url.lower().split('?', 1)[0]
-                if '/challenge/' in url or '/checkpoint/' in url:
-                    state = 'verification_required'
-                elif '/accounts/login' in url:
-                    state = 'session_expired'
-                elif driver.find_elements(By.CSS_SELECTOR, 'input[name="username"], input[name="password"]'):
-                    state = 'not_signed_in'
-                elif driver.find_elements(By.CSS_SELECTOR, 'nav a[href="/"], nav a[href*="/direct/"]'):
-                    state = 'connected'
-                else:
-                    state = 'unknown'
+                deadline = self.clock() + 8
+                while True:
+                    state, detected, reason = probe(driver, expected)
+                    if state != 'unknown' or self.clock() >= deadline:
+                        break
+                    time.sleep(0.5)
             return state
-        except Exception:
+        except Exception as exc:
+            reason = f'Verificacion fallida: {type(exc).__name__}'
             return state
         finally:
             with self.lock:
@@ -333,8 +337,9 @@ class VisualSessions:
                     pass
             try:
                 with self.db.connect() as con:
-                    con.execute('UPDATE accounts SET session_status=?,session_checked_at=? WHERE id=?',
-                                (state, now(), account_id))
+                    con.execute('''UPDATE accounts SET session_status=?,session_checked_at=?,
+                        session_user=?,session_reason=? WHERE id=?''',
+                                (state, now(), detected, reason, account_id))
                 self._event(account_id, 'session_verified')
             finally:
                 self._release(profile, lock_file)

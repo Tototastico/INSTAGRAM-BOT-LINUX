@@ -23,7 +23,7 @@ const statusLabels = {
 const sessionLabels = {
   connected: 'Sesión conectada', not_signed_in: 'Sin iniciar sesión',
   verification_required: 'Requiere verificación', session_expired: 'Sesión caducada',
-  verification_error: 'Error al verificar', unknown: 'No verificada',
+  verification_error: 'No se pudo verificar', unknown: 'No verificada', wrong_account: 'Cuenta incorrecta',
   verification_in_progress: 'Verificación en curso', in_use_by_task: 'En uso por una tarea',
 }
 const eventLabels = {
@@ -121,7 +121,7 @@ function errorSummary(value) {
 function App() {
   const [view, setView] = useState('inicio')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [data, setData] = useState({ overview: {}, dashboard: { draws: [], trend: [] }, settings: { reminder_hours_before: 24 }, tags: [], accounts: [], draws: [], assignments: [], tasks: [], events: [] })
+  const [data, setData] = useState({ overview: {}, dashboard: { draws: [], trend: [] }, settings: { reminder_hours_before: 24, browser_limit: '1' }, scheduler: {}, tags: [], accounts: [], draws: [], assignments: [], tasks: [], events: [] })
   const [modal, setModal] = useState(null)
   const [visualAccount, setVisualAccount] = useState(null)
   const [form, setForm] = useState({})
@@ -141,10 +141,10 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const keys = ['overview', 'dashboard', 'settings', 'tags', 'accounts', 'draws', 'assignments', 'tasks', 'events']
-      const optional = { dashboard: { draws: [], trend: [] }, settings: { reminder_hours_before: 24 }, tags: [] }
+      const keys = ['overview', 'dashboard', 'settings', 'scheduler', 'tags', 'accounts', 'draws', 'assignments', 'tasks', 'events']
+      const optional = { dashboard: { draws: [], trend: [] }, settings: { reminder_hours_before: 24, browser_limit: '1' }, scheduler: {}, tags: [] }
       const values = await Promise.all(keys.map(key => key in optional ? optionalRequest(`/${key}`, optional[key]) : request(`/${key}`)))
-      const [overview, dashboard, settings, tags, accounts, draws, assignments, tasks, events] = values
+      const [overview, dashboard, settings, scheduler, tags, accounts, draws, assignments, tasks, events] = values
       const latestId = events[0]?.id || 0
       if (lastEventId.current !== null && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         for (const event of events.filter(x => x.id > lastEventId.current && x.kind === 'blocked_suspected')) {
@@ -306,7 +306,8 @@ function App() {
           <section className="dashboard-section trend-section"><div className="section-heading"><h2>Clics por dia</h2><span className="subtle">Ultimos 7 dias</span></div><div className="trend-chart" role="img" aria-label="Clics en Publicar de los ultimos 7 dias">{trend.map(item => <div className="trend-column" key={item.day} title={`${formatDate(item.day)}: ${item.clicked} clics`}><span>{item.clicked}</span><div className="trend-track"><div style={{ height: `${Math.max(3, item.clicked / maxTrend * 100)}%` }} /></div><small>{item.day.slice(5)}</small></div>)}</div></section>
           <div className="dashboard-grid"><section className="dashboard-section"><div className="section-heading"><h2>Sorteos activos</h2><button className="text-action" onClick={() => setView('sorteos')}>Ver todos <ChevronRight size={16} /></button></div><div className="compact-list">{currentDraws.slice(0, 6).map(draw => <div className="compact-row" key={draw.id}><span className="compact-name">{draw.name}</span><span>{draw.clicked} clics</span></div>)}{!currentDraws.length && <Empty text="No hay sorteos activos." />}</div></section><section className="dashboard-section"><div className="section-heading"><h2>Finalizados</h2></div><div className="compact-list">{sortDraws(finished, 'date_desc').slice(0, 6).map(draw => <div className="compact-row" key={draw.id}><span className="compact-name">{draw.name}</span><span>{formatDeadline(draw)}</span><strong>{draw.clicked} clics</strong></div>)}{!finished.length && <Empty text="No hay sorteos finalizados." />}</div></section></div>
           <div className="section-heading"><h2>Tareas recientes</h2><button className="text-action" onClick={() => setView('actividad')}>Ver actividad <ChevronRight size={16} /></button></div>
-          <TaskTable tasks={data.tasks} limit={6} perform={perform} busy={busy} onSelect={id => { setSelectedTask(id); setView('actividad') }} />
+          <div className="scheduler-summary"><strong>Navegadores activos: {data.scheduler.active_browsers ?? 0}/{data.scheduler.limit ?? 1}</strong><span>Tareas en ejecución: {data.scheduler.running_tasks ?? 0}</span><span>En cola: {data.scheduler.queued_tasks ?? 0}</span><span>Memoria disponible: {data.scheduler.memory_available_mb == null ? 'No disponible' : `${data.scheduler.memory_available_mb} MB`}</span><label>Máximo de navegadores <select aria-label="Máximo de navegadores simultáneos" value={data.settings.browser_limit || '1'} onChange={e => perform(() => request('/settings', { method: 'PUT', body: JSON.stringify({ browser_limit: e.target.value }) }))}>{['1', '2', '3', '4', 'auto'].map(value => <option key={value} value={value}>{value === 'auto' ? 'Automático' : value}</option>)}</select></label></div>
+          <TaskTable tasks={data.tasks} reasons={data.scheduler.reasons || {}} limit={6} perform={perform} busy={busy} onSelect={id => { setSelectedTask(id); setView('actividad') }} />
         </>}
         {view === 'cuentas' && <>
           <PageHeading title="Cuentas" subtitle="Perfiles Chrome y acceso manual a Instagram." action="Agregar cuenta" onAction={() => openModal('accounts')} />
@@ -342,7 +343,8 @@ function App() {
         {view === 'actividad' && <>
           <PageHeading title="Actividad" subtitle="Seguimiento de ejecuciones e historial de eventos." />
           <div className="assignment-tools"><button className="button secondary" onClick={() => openModal('history')}><Edit3 size={16} />Corregir historial</button></div>
-          <TaskTable tasks={data.tasks} perform={perform} busy={busy} onSelect={setSelectedTask} selected={task?.id} />
+          <div className="scheduler-summary"><strong>Navegadores activos: {data.scheduler.active_browsers ?? 0}/{data.scheduler.limit ?? 1}</strong><span>Tareas en ejecución: {data.scheduler.running_tasks ?? 0}</span><span>En cola: {data.scheduler.queued_tasks ?? 0}</span><span>Memoria disponible: {data.scheduler.memory_available_mb == null ? 'No disponible' : `${data.scheduler.memory_available_mb} MB`}</span><label>Máximo de navegadores <select aria-label="Máximo de navegadores simultáneos" value={data.settings.browser_limit || '1'} onChange={e => perform(() => request('/settings', { method: 'PUT', body: JSON.stringify({ browser_limit: e.target.value }) }))}>{['1', '2', '3', '4', 'auto'].map(value => <option key={value} value={value}>{value === 'auto' ? 'Automático' : value}</option>)}</select></label></div>
+          <TaskTable tasks={data.tasks} reasons={data.scheduler.reasons || {}} perform={perform} busy={busy} onSelect={setSelectedTask} selected={task?.id} />
           {task?.last_error && <section className="task-error-detail" role="alert"><div><CircleAlert size={17} /><strong>Detalle de la tarea #{task.id}</strong></div><pre>{task.last_error}</pre></section>}
           <Diagnostics task={task} />
           <div className="section-heading activity-heading"><h2>Eventos {task ? `· Tarea #${task.id}` : ''}</h2><span className="subtle">Actualizacion automatica</span></div>
@@ -376,14 +378,14 @@ function SearchBox({ value, onChange }) {
 
 function Empty({ text }) { return <div className="empty">{text}</div> }
 
-function TaskTable({ tasks, limit, perform, busy, onSelect, selected }) {
+function TaskTable({ tasks, limit, perform, busy, onSelect, selected, reasons = {} }) {
   const priority = status => status === 'running' ? 0 : ['queued', 'pausing', 'cancelling'].includes(status) ? 1 : 2
   const ordered = [...tasks].sort((a, b) => priority(a.status) - priority(b.status) || b.id - a.id)
   const visible = limit ? ordered.slice(0, limit) : ordered
   return <div className="table-wrap"><table><thead><tr><th>Tarea</th><th>Cuenta</th><th>Sorteo</th><th>Estado</th><th>Detalle</th><th>Intentos</th><th>Clics</th><th>Tiempo</th><th className="actions-col">Controles</th></tr></thead><tbody>
     {visible.map(item => <tr key={item.id} className={[selected === item.id ? 'selected-row' : '', item.status === 'running' ? 'active-task-row' : ''].filter(Boolean).join(' ')} onClick={() => onSelect(item.id)}>
       <td className="primary-cell">#{item.id}</td><td>{item.account_name}</td><td>{item.draw_name}</td><td><Status value={item.status} /></td>
-      <td className="task-error-cell">{item.last_error && <span title={errorSummary(item.last_error)}><CircleAlert size={14} /><span className="task-error-text">{errorSummary(item.last_error)}</span></span>}</td>
+      <td className="task-error-cell">{item.status === 'queued' && <span>{reasons[item.id] || 'En cola'}</span>}{item.last_error && <span title={errorSummary(item.last_error)}><CircleAlert size={14} /><span className="task-error-text">{errorSummary(item.last_error)}</span></span>}</td>
       <td>{item.attempts}</td><td>{item.clicked}</td><td><span className="time-cell"><Clock3 size={14} />{Math.floor(item.elapsed_seconds / 60)} min</span></td>
       <td className="row-actions" onClick={e => e.stopPropagation()}><IconButton icon={ScrollText} title="Ver logs y error" onClick={() => onSelect(item.id)} />{['queued', 'running'].includes(item.status) && <IconButton icon={Pause} title="Pausar" disabled={busy} onClick={() => perform(() => request(`/tasks/${item.id}/pause`, { method: 'POST' }))} />}{['paused', 'interrupted'].includes(item.status) && <IconButton icon={Play} title="Reanudar" disabled={busy} onClick={() => confirmAction(`¿Reanudar la tarea ${item.id}?`, () => perform(() => request(`/tasks/${item.id}/resume`, { method: 'POST' })))} />}{['queued', 'running', 'paused', 'interrupted'].includes(item.status) && <IconButton icon={Square} title="Cancelar" disabled={busy} onClick={() => confirmAction(`¿Cancelar la tarea ${item.id}?`, () => perform(() => request(`/tasks/${item.id}/cancel`, { method: 'POST' })))} />}</td>
     </tr>)}

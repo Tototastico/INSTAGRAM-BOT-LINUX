@@ -400,7 +400,8 @@ def test_stale_textarea_is_relocated_only_before_typing(monkeypatch):
     runner.open('https://www.instagram.com/p/ABC/', 'cuenta1')
     runner.post('hola @amigo')
     assert calls[-1] == ('post', 'hola @amigo', True)
-    assert len([call for call in calls if call[0] == 'find']) == 1
+    assert len([call for call in calls if call[0] == 'find' and call[2] ==
+                'textarea, input, [contenteditable="true"], [role="textbox"]']) == 1
     assert events[0][0] == 'selenium_retry'
     runner.close()
 

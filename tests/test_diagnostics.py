@@ -143,24 +143,27 @@ def test_non_selenium_error_keeps_metadata_without_screenshot(tmp_path, monkeypa
     assert 'secret' not in str(item)
 
 
-def test_diagnostic_api_requires_token_and_never_returns_image_for_other_task(tmp_path, monkeypatch):
+def test_diagnostic_api_requires_admin_session_and_never_returns_image_for_other_task(tmp_path, monkeypatch):
     monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
-    monkeypatch.setenv('BOT_DIAGNOSTICS_TOKEN', 'test-only-token')
+    from webapp.visual_auth import password_hash
+    monkeypatch.setenv('BOT_PUBLIC_ORIGIN', 'https://bot.example.test')
+    monkeypatch.setenv('BOT_VISUAL_ADMIN_PASSWORD_HASH', password_hash('test-password'))
     db, task, other, account = seeded_database(tmp_path)
     diagnostic_id = DiagnosticStore(db).record(task, account, 'comment_box_lookup', TimeoutException(),
                                             Browser('https://www.instagram.com/p/ABC/'))
     app = make_app(db_path=db.path, legacy_config=tmp_path / 'missing.json')
-    with TestClient(app) as client:
+    with TestClient(app, base_url='https://bot.example.test') as client:
         endpoint = f'/api/tasks/{task}/diagnostics'
         assert client.get(endpoint).status_code == 401
-        assert client.get(endpoint, headers={'X-Diagnostics-Token': 'wrong'}).status_code == 401
-        headers = {'X-Diagnostics-Token': 'test-only-token'}
-        response = client.get(endpoint, headers=headers)
+        assert client.get(endpoint, headers={'X-Diagnostics-Token': 'test-only-token'}).status_code == 401
+        assert client.post('/api/visual/auth/login', json={'password': 'test-password'},
+                           headers={'Origin': 'https://bot.example.test'}).status_code == 200
+        response = client.get(endpoint)
         assert response.status_code == 200
         assert response.headers['cache-control'] == 'no-store'
         assert response.json()['items'][0]['id'] == diagnostic_id
-        assert client.get(f'/api/tasks/{other}/diagnostics/{diagnostic_id}/screenshot', headers=headers).status_code == 404
-        image = client.get(f'/api/tasks/{task}/diagnostics/{diagnostic_id}/screenshot', headers=headers)
+        assert client.get(f'/api/tasks/{other}/diagnostics/{diagnostic_id}/screenshot').status_code == 404
+        image = client.get(f'/api/tasks/{task}/diagnostics/{diagnostic_id}/screenshot')
         assert image.status_code == 200 and image.content.startswith(b'\x89PNG')
 
 

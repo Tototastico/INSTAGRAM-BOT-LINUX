@@ -104,7 +104,10 @@ def test_verification_reads_state_and_releases_profile(visual_client, monkeypatc
         def set_page_load_timeout(self, _): pass
         def get(self, _): pass
         def find_elements(self, _, selector):
-            return [object()] if selector.startswith('nav ') else []
+            if selector == 'a[href]':
+                return [types.SimpleNamespace(get_attribute=lambda name: '/Cuenta 2/' if name == 'href' else 'Perfil',
+                    find_elements=lambda *_: [])]
+            return []
         def quit(self): self.closed = True
 
     driver = Driver()

@@ -22,24 +22,39 @@ const categoryLabels = {
 const dateTime = value => value ? new Date(value).toLocaleString('es-AR') : 'Sin registrar'
 
 export default function Diagnostics({ task }) {
-  const [input, setInput] = useState('')
-  const [token, setToken] = useState('')
+  const [password, setPassword] = useState('')
+  const [authenticated, setAuthenticated] = useState(false)
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [image, setImage] = useState(null)
 
   useEffect(() => {
+    fetch('/api/visual/auth', { cache: 'no-store' }).then(r => r.json()).then(value => setAuthenticated(!!value.authenticated)).catch(() => setAuthenticated(false))
+  }, [task?.id])
+
+  async function login(event) {
+    event.preventDefault()
+    setError('')
+    try {
+      const response = await fetch('/api/visual/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) })
+      setPassword('')
+      if (!response.ok) { setError('No se pudo iniciar la sesión administrativa'); return }
+      setAuthenticated(true)
+    } catch { setError('No se pudo conectar con el servidor') }
+  }
+
+  useEffect(() => {
     setData(null)
     setError('')
     setImage(null)
-    if (!task?.id || !token) return
+    if (!task?.id || !authenticated) return
     let active = true
     const load = async () => {
       try {
         const response = await fetch(`/api/tasks/${task.id}/diagnostics`, {
-          headers: { 'X-Diagnostics-Token': token }, cache: 'no-store',
+          credentials: 'same-origin', cache: 'no-store',
         })
-        if (!response.ok) throw new Error(response.status === 401 ? 'Token incorrecto' : `Diagnóstico no disponible (${response.status})`)
+        if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'Iniciá sesión administrativa para ver el diagnóstico' : `Diagnóstico no disponible (${response.status})`)
         const result = await response.json()
         if (active) { setData(result); setError('') }
       } catch (err) { if (active) setError(err.message) }
@@ -47,7 +62,7 @@ export default function Diagnostics({ task }) {
     load()
     const timer = setInterval(load, 5000)
     return () => { active = false; clearInterval(timer) }
-  }, [task?.id, token])
+  }, [task?.id, authenticated])
 
   useEffect(() => () => { if (image?.url) URL.revokeObjectURL(image.url) }, [image])
 
@@ -55,7 +70,7 @@ export default function Diagnostics({ task }) {
     setError('')
     try {
       const response = await fetch(`/api/tasks/${task.id}/diagnostics/${item.id}/screenshot`, {
-        headers: { 'X-Diagnostics-Token': token }, cache: 'no-store',
+        credentials: 'same-origin', cache: 'no-store',
       })
       if (!response.ok) throw new Error(`No se pudo abrir la captura (${response.status})`)
       setImage({ id: item.id, url: URL.createObjectURL(await response.blob()) })
@@ -65,11 +80,10 @@ export default function Diagnostics({ task }) {
   return <section className="diagnostics-panel" aria-label="Diagnóstico">
     <div className="section-heading"><h2>Diagnóstico {task ? `· Tarea #${task.id}` : ''}</h2></div>
     {!task && <p className="subtle">Seleccioná una tarea para ver su diagnóstico.</p>}
-    {task && !token && <form className="diagnostics-unlock" onSubmit={event => { event.preventDefault(); setToken(input.trim()); setInput('') }}>
-      <label>Token de diagnóstico<input type="password" autoComplete="off" value={input} onChange={event => setInput(event.target.value)} placeholder="Token configurado en el servidor" required /></label>
+    {task && !authenticated && <form className="diagnostics-unlock" onSubmit={login}>
+      <label>Acceso administrativo<input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required /></label>
       <button className="button primary" type="submit">Abrir diagnóstico</button>
     </form>}
-    {task && token && <button className="button secondary" onClick={() => { setToken(''); setData(null); setImage(null) }}>Cerrar diagnóstico</button>}
     {error && <p className="diagnostics-error" role="alert">{error}</p>}
     {data && <>
       <div className="diagnostics-summary">

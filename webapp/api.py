@@ -1,14 +1,12 @@
 import asyncio
 import json
-import os
-import secrets
 import sqlite3
 from contextlib import asynccontextmanager, suppress
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -101,11 +99,19 @@ class TagsIn(BaseModel):
 class SettingsIn(BaseModel):
     reminder_hours_before: int | None = Field(default=None, ge=1, le=168)
     reminder_days_before: int | None = Field(default=None, ge=0, le=1)
+    browser_limit: str | None = None
+
+    @field_validator('browser_limit')
+    @classmethod
+    def valid_browser_limit(cls, value):
+        if value is not None and value not in ('1', '2', '3', '4', 'auto'):
+            raise ValueError('Selecciona 1, 2, 3, 4 o automatico')
+        return value
 
     @model_validator(mode='after')
     def has_reminder(self):
-        if self.reminder_hours_before is None and self.reminder_days_before is None:
-            raise ValueError('Indica la anticipacion del aviso')
+        if self.reminder_hours_before is None and self.reminder_days_before is None and self.browser_limit is None:
+            raise ValueError('Indica una configuracion')
         return self
 
 
@@ -143,6 +149,7 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
             while True:
                 await asyncio.sleep(15)
                 await asyncio.to_thread(visual.prune)
+                await asyncio.to_thread(coordinator.dispatch)
 
         cleanup = [asyncio.create_task(prune_diagnostics()), asyncio.create_task(prune_visual())]
         try:
@@ -205,7 +212,8 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
     def account_session(item_id: int, request: Request):
         visual_required(request)
         with db.connect() as con:
-            account = row(con, 'SELECT id,profile_path,session_status,session_checked_at FROM accounts WHERE id=?', (item_id,))
+            account = row(con, '''SELECT id,name,profile_arg,profile_path,session_status,session_checked_at,
+                session_user,session_reason FROM accounts WHERE id=?''', (item_id,))
         if not account:
             raise HTTPException(404, 'Cuenta inexistente')
         visual_state = visual.info(item_id)
@@ -237,7 +245,10 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
     def verify_visual(item_id: int, request: Request):
         visual_required(request, mutate=True)
         try:
-            return {'status': visual.verify(item_id)}
+            status = visual.verify(item_id)
+            with db.connect() as con:
+                account = row(con, 'SELECT session_status,session_checked_at,session_user,session_reason FROM accounts WHERE id=?', (item_id,))
+            return {'status': status, **account} if account else {'status': status}
         except VisualSessionError as exc:
             raise HTTPException(409, str(exc)) from exc
 
@@ -292,16 +303,9 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
             with suppress(RuntimeError):
                 await websocket.close()
 
-    def require_diagnostics_token(value):
-        expected = os.environ.get('BOT_DIAGNOSTICS_TOKEN', '')
-        if not expected:
-            raise HTTPException(503, 'Diagnosticos no configurados')
-        if not value or not secrets.compare_digest(value, expected):
-            raise HTTPException(401, 'Token de diagnostico invalido', headers={'WWW-Authenticate': 'Bearer'})
-
     @app.get('/api/tasks/{task_id}/diagnostics')
-    def task_diagnostics(task_id: int, x_diagnostics_token: str | None = Header(default=None)):
-        require_diagnostics_token(x_diagnostics_token)
+    def task_diagnostics(task_id: int, request: Request):
+        visual_required(request)
         coordinator.diagnostics.prune()
         with db.connect() as con:
             task = row(con, 'SELECT id,status,account_id FROM tasks WHERE id=?', (task_id,))
@@ -318,9 +322,8 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
             headers={'Cache-Control': 'no-store'})
 
     @app.get('/api/tasks/{task_id}/diagnostics/{diagnostic_id}/screenshot')
-    def diagnostic_screenshot(task_id: int, diagnostic_id: str,
-                              x_diagnostics_token: str | None = Header(default=None)):
-        require_diagnostics_token(x_diagnostics_token)
+    def diagnostic_screenshot(task_id: int, diagnostic_id: str, request: Request):
+        visual_required(request)
         path = coordinator.diagnostics.screenshot(task_id, diagnostic_id)
         if path is None:
             raise HTTPException(404, 'Captura inexistente')
@@ -391,17 +394,30 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
     @app.get('/api/settings')
     def settings():
         with db.connect() as con:
-            return {key: int(row(con, 'SELECT value FROM settings WHERE key=?', (key,))['value'])
-                    for key in ('reminder_hours_before', 'reminder_days_before')}
+            values = {key: int(row(con, 'SELECT value FROM settings WHERE key=?', (key,))['value'])
+                      for key in ('reminder_hours_before', 'reminder_days_before')}
+            limit = row(con, "SELECT value FROM settings WHERE key='browser_limit'")
+            values['browser_limit'] = limit['value'] if limit else str(coordinator.browser_limit(con))
+            return values
 
     @app.put('/api/settings')
     def update_settings(data: SettingsIn):
-        hours = data.reminder_hours_before if data.reminder_hours_before is not None else (6 if data.reminder_days_before == 0 else 24)
-        days = data.reminder_days_before if data.reminder_days_before is not None else int(hours >= 24)
         with db.connect() as con:
-            con.executemany('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-                            [('reminder_hours_before', str(hours)), ('reminder_days_before', str(days))])
-        return {'reminder_hours_before': hours, 'reminder_days_before': days}
+            current = {key: int(row(con, 'SELECT value FROM settings WHERE key=?', (key,))['value'])
+                       for key in ('reminder_hours_before', 'reminder_days_before')}
+            hours = data.reminder_hours_before if data.reminder_hours_before is not None else (
+                6 if data.reminder_days_before == 0 else 24 if data.reminder_days_before == 1 else current['reminder_hours_before'])
+            days = data.reminder_days_before if data.reminder_days_before is not None else int(hours >= 24)
+            pairs = [('reminder_hours_before', str(hours)), ('reminder_days_before', str(days))]
+            if data.browser_limit is not None:
+                pairs.append(('browser_limit', data.browser_limit))
+            con.executemany('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', pairs)
+        coordinator.dispatch()
+        return settings()
+
+    @app.get('/api/scheduler')
+    def scheduler():
+        return coordinator.scheduler_status()
 
     @app.get('/api/tags')
     def tags():
