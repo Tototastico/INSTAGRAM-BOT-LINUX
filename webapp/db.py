@@ -108,8 +108,26 @@ class Database:
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS task_runtime_state (
+                    task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
+                    stage TEXT NOT NULL, stage_at TEXT NOT NULL,
+                    last_progress_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS task_diagnostics (
+                    id TEXT PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id),
+                    account_id INTEGER NOT NULL REFERENCES accounts(id),
+                    created_at TEXT NOT NULL, stage TEXT NOT NULL,
+                    error_type TEXT NOT NULL, category TEXT NOT NULL,
+                    summary TEXT NOT NULL, page_url TEXT NOT NULL,
+                    page_title TEXT NOT NULL, ready_state TEXT NOT NULL,
+                    browser_responding INTEGER NOT NULL,
+                    selector TEXT NOT NULL, matching_elements INTEGER,
+                    visible_elements INTEGER, dialog_count INTEGER,
+                    screenshot_file TEXT
+                );
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_diagnostics_task ON task_diagnostics(task_id, created_at DESC);
             ''')
             columns = {item['name'] for item in con.execute('PRAGMA table_info(accounts)')}
             if 'attention_required' not in columns:

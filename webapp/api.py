@@ -1,12 +1,15 @@
+import asyncio
 import json
+import os
+import secrets
 import sqlite3
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -118,12 +121,60 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None):
     async def lifespan(app):
         db.initialize()
         db.recover_interrupted()
-        yield
-        coordinator.shutdown()
+        coordinator.diagnostics.prune()
+
+        async def prune_diagnostics():
+            while True:
+                await asyncio.sleep(3600)
+                await asyncio.to_thread(coordinator.diagnostics.prune)
+
+        cleanup = asyncio.create_task(prune_diagnostics())
+        try:
+            yield
+        finally:
+            cleanup.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup
+            coordinator.shutdown()
 
     app = FastAPI(title='INSTAGRAM-BOT Local', lifespan=lifespan)
     app.state.db = db
     app.state.coordinator = coordinator
+
+    def require_diagnostics_token(value):
+        expected = os.environ.get('BOT_DIAGNOSTICS_TOKEN', '')
+        if not expected:
+            raise HTTPException(503, 'Diagnosticos no configurados')
+        if not value or not secrets.compare_digest(value, expected):
+            raise HTTPException(401, 'Token de diagnostico invalido', headers={'WWW-Authenticate': 'Bearer'})
+
+    @app.get('/api/tasks/{task_id}/diagnostics')
+    def task_diagnostics(task_id: int, x_diagnostics_token: str | None = Header(default=None)):
+        require_diagnostics_token(x_diagnostics_token)
+        coordinator.diagnostics.prune()
+        with db.connect() as con:
+            task = row(con, 'SELECT id,status,account_id FROM tasks WHERE id=?', (task_id,))
+            if not task:
+                raise HTTPException(404, 'Tarea inexistente')
+            state = row(con, 'SELECT stage,stage_at,last_progress_at FROM task_runtime_state WHERE task_id=?', (task_id,))
+            last_event = row(con, """SELECT kind,message,created_at FROM events
+                WHERE task_id=? AND kind!='attempt' ORDER BY id DESC LIMIT 1""", (task_id,))
+        return JSONResponse({'task_id': task_id, 'account_id': task['account_id'],
+            'stage': state['stage'] if state else task['status'],
+            'stage_at': state['stage_at'] if state else None,
+            'last_progress_at': state['last_progress_at'] if state else None,
+            'last_event': last_event, 'items': coordinator.diagnostics.for_task(task_id)},
+            headers={'Cache-Control': 'no-store'})
+
+    @app.get('/api/tasks/{task_id}/diagnostics/{diagnostic_id}/screenshot')
+    def diagnostic_screenshot(task_id: int, diagnostic_id: str,
+                              x_diagnostics_token: str | None = Header(default=None)):
+        require_diagnostics_token(x_diagnostics_token)
+        path = coordinator.diagnostics.screenshot(task_id, diagnostic_id)
+        if path is None:
+            raise HTTPException(404, 'Captura inexistente')
+        return FileResponse(path, media_type='image/png', headers={
+            'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
     @app.get('/api/health')
     def health():

@@ -1,0 +1,88 @@
+import { useEffect, useState } from 'react'
+
+const stageLabels = {
+  chrome_start: 'Iniciando Chrome', navigation: 'Abriendo publicación',
+  page_ready: 'Preparando página', comment_box_lookup: 'Buscando caja de comentarios',
+  comment_box_ready: 'Caja de comentarios disponible', comment_count: 'Leyendo contador',
+  comment_typing: 'Escribiendo comentario', publish_button_lookup: 'Buscando Publicar',
+  publish_click: 'Clic en Publicar', failed: 'Error', completed: 'Finalizada',
+  interrupted: 'Interrumpida', paused: 'Pausada', cancelled: 'Cancelada',
+}
+const categoryLabels = {
+  browser_unresponsive: 'Navegador sin respuesta', session: 'Sesión vencida',
+  verification: 'Verificación manual', navigation: 'Navegación',
+  page_loading: 'Carga incompleta', selector_missing: 'Selector no encontrado',
+  post_unavailable: 'Publicación inaccesible',
+  not_interactable: 'Elemento no interactuable', overlay: 'Ventana superpuesta',
+  interaction: 'Interacción',
+}
+const dateTime = value => value ? new Date(value).toLocaleString('es-AR') : 'Sin registrar'
+
+export default function Diagnostics({ task }) {
+  const [input, setInput] = useState('')
+  const [token, setToken] = useState('')
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+  const [image, setImage] = useState(null)
+
+  useEffect(() => {
+    setData(null)
+    setError('')
+    setImage(null)
+    if (!task?.id || !token) return
+    let active = true
+    const load = async () => {
+      try {
+        const response = await fetch(`/api/tasks/${task.id}/diagnostics`, {
+          headers: { 'X-Diagnostics-Token': token }, cache: 'no-store',
+        })
+        if (!response.ok) throw new Error(response.status === 401 ? 'Token incorrecto' : `Diagnóstico no disponible (${response.status})`)
+        const result = await response.json()
+        if (active) { setData(result); setError('') }
+      } catch (err) { if (active) setError(err.message) }
+    }
+    load()
+    const timer = setInterval(load, 5000)
+    return () => { active = false; clearInterval(timer) }
+  }, [task?.id, token])
+
+  useEffect(() => () => { if (image?.url) URL.revokeObjectURL(image.url) }, [image])
+
+  async function showScreenshot(item) {
+    setError('')
+    try {
+      const response = await fetch(`/api/tasks/${task.id}/diagnostics/${item.id}/screenshot`, {
+        headers: { 'X-Diagnostics-Token': token }, cache: 'no-store',
+      })
+      if (!response.ok) throw new Error(`No se pudo abrir la captura (${response.status})`)
+      setImage({ id: item.id, url: URL.createObjectURL(await response.blob()) })
+    } catch (err) { setError(err.message) }
+  }
+
+  return <section className="diagnostics-panel" aria-label="Diagnóstico">
+    <div className="section-heading"><h2>Diagnóstico {task ? `· Tarea #${task.id}` : ''}</h2></div>
+    {!task && <p className="subtle">Seleccioná una tarea para ver su diagnóstico.</p>}
+    {task && !token && <form className="diagnostics-unlock" onSubmit={event => { event.preventDefault(); setToken(input.trim()); setInput('') }}>
+      <label>Token de diagnóstico<input type="password" autoComplete="off" value={input} onChange={event => setInput(event.target.value)} placeholder="Token configurado en el servidor" required /></label>
+      <button className="button primary" type="submit">Abrir diagnóstico</button>
+    </form>}
+    {task && token && <button className="button secondary" onClick={() => { setToken(''); setData(null); setImage(null) }}>Cerrar diagnóstico</button>}
+    {error && <p className="diagnostics-error" role="alert">{error}</p>}
+    {data && <>
+      <div className="diagnostics-summary">
+        <div><span>Etapa actual</span><strong>{stageLabels[data.stage] || data.stage}</strong><small>{dateTime(data.stage_at)}</small></div>
+        <div><span>Último avance real</span><strong>{dateTime(data.last_progress_at)}</strong></div>
+        <div><span>Último evento significativo</span><strong>{data.last_event?.kind || 'Sin eventos'}</strong><small>{dateTime(data.last_event?.created_at)}</small></div>
+      </div>
+      {!data.items.length && <p className="subtle">No hay errores de Selenium registrados para esta tarea.</p>}
+      <div className="diagnostics-list">{data.items.map(item => <article className="diagnostic-card" key={item.id}>
+        <div className="diagnostic-card-head"><strong>{categoryLabels[item.category] || item.category}</strong><time>{dateTime(item.created_at)}</time></div>
+        <p>{item.summary}</p>
+        <dl><div><dt>Etapa</dt><dd>{stageLabels[item.stage] || item.stage}</dd></div><div><dt>Error</dt><dd>{item.error_type}</dd></div><div><dt>URL</dt><dd>{item.page_url || 'No disponible'}</dd></div><div><dt>Título</dt><dd>{item.page_title || 'No disponible'}</dd></div><div><dt>Documento</dt><dd>{item.ready_state}</dd></div><div><dt>Navegador</dt><dd>{item.browser_responding ? 'Responde' : 'No responde'}</dd></div><div><dt>Elementos / visibles</dt><dd>{item.matching_elements ?? '?'} / {item.visible_elements ?? '?'}</dd></div><div><dt>Diálogos</dt><dd>{item.dialog_count ?? '?'}</dd></div></dl>
+        <small>ID: {item.id}</small>
+        {item.has_screenshot ? <button className="button secondary" onClick={() => showScreenshot(item)}>Ver captura</button> : <span className="subtle">Sin captura por privacidad o navegador no disponible</span>}
+        {image?.id === item.id && <div className="diagnostic-image"><img src={image.url} alt={`Captura del diagnóstico ${item.id}`} /><button className="button secondary" onClick={() => setImage(null)}>Cerrar captura</button></div>}
+      </article>)}</div>
+    </>}
+  </section>
+}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { deadlineFor, drawState, reminderDue, sortDraws, timeLeft } from './draws.mjs'
+import Diagnostics from './Diagnostics.jsx'
 import {
   Activity, Archive, Bell, Check, ChevronRight, CircleAlert, CircleCheck, Clock3,
   Edit3, LayoutDashboard, Link2, ListTodo, Menu, Pause, Play, Plus, RefreshCw,
@@ -327,6 +328,7 @@ function App() {
           <div className="assignment-tools"><button className="button secondary" onClick={() => openModal('history')}><Edit3 size={16} />Corregir historial</button></div>
           <TaskTable tasks={data.tasks} perform={perform} busy={busy} onSelect={setSelectedTask} selected={task?.id} />
           {task?.last_error && <section className="task-error-detail" role="alert"><div><CircleAlert size={17} /><strong>Detalle de la tarea #{task.id}</strong></div><pre>{task.last_error}</pre></section>}
+          <Diagnostics task={task} />
           <div className="section-heading activity-heading"><h2>Eventos {task ? `· Tarea #${task.id}` : ''}</h2><span className="subtle">Actualizacion automatica</span></div>
           <div className="event-list">{(eventsTaskId === task?.id ? taskEvents : []).map(event => <div className="event" key={event.id}><span className={`event-dot event-${event.kind}`} /><div><strong>{eventLabels[event.kind] || event.kind}</strong><p>{event.kind === 'failed' ? errorSummary(event.message) : event.message}</p></div><time>{new Date(event.created_at).toLocaleString('es-AR')}</time></div>)}{eventsTaskId === task?.id && !taskEvents.length && <Empty text="No hay eventos registrados para esta tarea." />}</div>
         </>}

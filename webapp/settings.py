@@ -33,3 +33,24 @@ def max_browsers():
 
 def headless():
     return os.environ.get('HEADLESS', 'true').lower() in ('1', 'true', 'yes', 'on')
+
+
+def debug_dir():
+    return Path(os.environ.get('BOT_DEBUG_DIR', data_dir() / 'debug')).expanduser().resolve()
+
+
+def diagnostic_retention_days():
+    return max(1, int(os.environ.get('BOT_DEBUG_RETENTION_DAYS', '7')))
+
+
+def validate_visual_environment(platform_name=None, environ=None):
+    """Fail before Chrome starts if a visible Linux session cannot use Xvfb."""
+    platform_name = platform_name or os.name
+    environ = environ if environ is not None else os.environ
+    if platform_name != 'posix':
+        return
+    if not environ.get('DISPLAY'):
+        raise RuntimeError('HEADLESS=false requiere DISPLAY (por ejemplo :99)')
+    authority = environ.get('XAUTHORITY')
+    if not authority or not Path(authority).is_file() or not os.access(authority, os.R_OK):
+        raise RuntimeError('HEADLESS=false requiere un XAUTHORITY legible por el usuario del servicio')

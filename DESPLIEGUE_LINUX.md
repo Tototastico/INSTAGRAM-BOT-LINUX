@@ -52,6 +52,38 @@ sudo systemctl start instagram-bot
 
 FastAPI escucha por defecto en `127.0.0.1` y no tiene autenticacion propia. No abras su puerto en el firewall ni uses `0.0.0.0`. Desde Windows, ejecuta `ssh -N -L 18000:127.0.0.1:8000 jarvisadmin@TU_VPS` y abre `http://127.0.0.1:18000/`. Para el celular, usa un tunel SSH del telefono con el mismo reenvio local y abre la URL local en el navegador del telefono. Una alternativa es una VPN privada como Tailscale, manteniendo el panel unido a loopback y usando un tunel SSH por esa red. Un dominio publico requiere proxy HTTPS, autenticacion y proteccion CSRF antes de exponerse.
 
+## Monitoreo visual y diagnosticos de Selenium
+
+`HEADLESS=true` conserva el arranque normal. Para ver Chrome en el Xvfb existente, configura `HEADLESS=false`, `DISPLAY=:99` y `XAUTHORITY` con la ruta **real** del archivo de autorizacion X11. El usuario `jarvisadmin` debe poder leer ese archivo. Chrome hereda ambas variables tanto de systemd (`EnvironmentFile`) como de la terminal manual. No se crean perfiles de cuentas nuevos durante la prueba visual: el verificador usa un perfil temporal fuera de `BOT_ACCOUNTS_DIR`.
+
+Configura tambien `BOT_DEBUG_DIR=/home/jarvisadmin/instagram-bot-data/debug`, `BOT_DEBUG_RETENTION_DAYS=7` y un token aleatorio privado `BOT_DIAGNOSTICS_TOKEN`. Genera el valor con `.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))'` y pegalo mediante `sudoedit /etc/instagram-bot/instagram-bot.env`. No incluyas comillas ni publiques el token. Con token ausente, los endpoints de diagnostico devuelven 503. El panel pide el token al abrir la seccion **Diagnostico** de una tarea; lo mantiene solo en memoria del navegador. Las capturas se sirven con `X-Diagnostics-Token`, vinculadas al ID de la tarea, y no se guardan en cache. La carpeta y las capturas usan permisos 0700/0600; los registros y PNG anteriores a siete dias se eliminan al generar o consultar diagnosticos.
+
+El diagnostico registra etapa, tipo de error, URL sin query ni fragmento, titulo (oculto en login), estado de carga, respuesta del navegador y numero de elementos visibles. No guarda HTML, cookies, cabeceras ni el texto crudo de excepciones de Selenium. No toma capturas de login, challenge o checkpoint. Una captura de una publicacion puede contener informacion de la cuenta: conserva el token y los backups como secretos. Los endpoints generales del panel siguen siendo locales y deben usarse solo por tunel SSH.
+
+Para actualizar esta version en Hetzner sin tocar Jarvis ni Nginx:
+
+```bash
+sudo systemctl stop instagram-bot
+cd /opt/instagram-bot-linux
+sudo -u jarvisadmin env BOT_DB_PATH=/home/jarvisadmin/instagram-bot-data/bot.sqlite3 .venv/bin/python -m deploy.backup /home/jarvisadmin/instagram-bot-backups
+# Desde la PC, ejecuta el rsync de la seccion Instalacion, excluyendo datos y perfiles.
+bash deploy/install.sh
+sudoedit /etc/instagram-bot/instagram-bot.env
+sudo systemctl restart instagram-bot
+curl -fsS http://127.0.0.1:8000/api/health
+```
+
+Para comprobar la pantalla sin abrir Instagram ni modificar sesiones, instala `xdotool` (`sudo apt install -y xdotool`). Con el servicio y VNC existentes, ejecuta:
+
+```bash
+cd /opt/instagram-bot-linux
+sudo -u jarvisadmin env HEADLESS=false DISPLAY=:99 XAUTHORITY=/RUTA/REAL/.Xauthority CHROME_BINARY=/usr/bin/google-chrome-stable BOT_DATA_DIR=/home/jarvisadmin/instagram-bot-data .venv/bin/python -m deploy.verify_visual
+```
+
+El script abre durante 30 segundos una pagina `data:` con el texto "Chrome controlado por Selenium", comprueba que X11 informa una ventana Chrome visible y luego cierra el navegador temporal. Desde tu PC, abre un tunel separado `ssh -N -L 5901:127.0.0.1:5901 jarvisadmin@TU_VPS` y conecta tu visor VNC a `127.0.0.1:5901`. Si el visor no muestra esa ventana, comprueba que VNC y el comando usan el mismo `DISPLAY`, y revisa `XAUTHORITY`; no expongas el puerto VNC a Internet. Despues de la prueba, deja `HEADLESS=true` o cambia a `false` en el archivo de entorno y reinicia solo `instagram-bot`.
+
+El timeout que motivo este cambio se produce cuando `WebDriverWait` no encuentra la caja `textarea` con las etiquetas conocidas en español o ingles. El diagnostico distingue redireccion al login, verificacion, publicacion inaccesible, carga incompleta, selector ausente, elemento no interactuable, dialogo superpuesto y navegador sin respuesta. No aumenta el tiempo de espera ni intenta superar verificaciones de Instagram.
+
 ## Actualizacion, respaldo y restauracion
 
 Antes de actualizar, espera o cancela las tareas activas y detene el servicio. Copia SQLite consistentemente:

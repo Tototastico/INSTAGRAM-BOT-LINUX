@@ -37,9 +37,32 @@ class SeleniumRunner:
         self.event_sink = None
         self.open_error = None
         self.profile_lock = None
+        self.diagnostic_sink = None
+        self.stage_sink = None
+        self.last_diagnostic_id = None
 
     def set_event_sink(self, sink):
         self.event_sink = sink
+
+    def set_diagnostic_sink(self, sink):
+        self.diagnostic_sink = sink
+
+    def set_stage_sink(self, sink):
+        self.stage_sink = sink
+
+    def _mark_stage(self, stage):
+        if self.stage_sink is not None:
+            try:
+                self.stage_sink(stage)
+            except Exception:
+                pass
+
+    def _diagnose(self, stage, exc, driver, selector=''):
+        if self.diagnostic_sink is not None:
+            try:
+                self.last_diagnostic_id = self.diagnostic_sink(stage, exc, driver, selector)
+            except Exception:
+                pass  # Diagnostics must not hide the original Selenium failure.
 
     def _log(self, kind, message):
         if kind == 'selenium_error':
@@ -67,10 +90,15 @@ class SeleniumRunner:
                 raise RuntimeError('El perfil Chrome ya esta en uso')
 
         self.open_error = None
-        if self.event_sink is None:
-            success, self.driver, self.textarea = acceder_caja(url, profile_arg)
-        else:
-            success, self.driver, self.textarea = acceder_caja(url, profile_arg, on_log=self._log)
+        self.last_diagnostic_id = None
+        kwargs = {}
+        if self.event_sink is not None:
+            kwargs['on_log'] = self._log
+        if self.stage_sink is not None:
+            kwargs['on_stage'] = self._mark_stage
+        if self.diagnostic_sink is not None:
+            kwargs['on_diagnostic'] = self._diagnose
+        success, self.driver, self.textarea = acceder_caja(url, profile_arg, **kwargs)
         if not success:
             self._check_session()
             detail = f': {self.open_error}' if self.open_error else ''
@@ -79,20 +107,26 @@ class SeleniumRunner:
 
     def read_comment_count(self):
         # Read the counter next to the comment icon without changing navigation or focus.
-        icons = self.driver.find_elements(By.CSS_SELECTOR, 'svg[aria-label="Comentar"], svg[aria-label="Comment"]')
-        for icon in icons:
-            counters = icon.find_elements(
-                By.XPATH, './ancestor::span[1]/following-sibling::span[@role="button"][1]'
-            )
-            for counter in counters:
-                count = parse_comment_count(counter.text)
-                if count is not None:
-                    return count
-        return None
+        selector = 'svg[aria-label="Comentar"], svg[aria-label="Comment"]'
+        try:
+            icons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+            for icon in icons:
+                counters = icon.find_elements(
+                    By.XPATH, './ancestor::span[1]/following-sibling::span[@role="button"][1]'
+                )
+                for counter in counters:
+                    count = parse_comment_count(counter.text)
+                    if count is not None:
+                        return count
+            return None
+        except Exception as exc:
+            self._diagnose('comment_count', exc, self.driver, selector)
+            raise
 
     def post(self, comment):
         from selenium_runner import comentar_en_post
 
+        self.last_diagnostic_id = None
         self._check_session()
         for attempt in range(3):
             try:
@@ -102,27 +136,45 @@ class SeleniumRunner:
                 break
             except StaleElementReferenceException as exc:
                 if attempt == 2:
+                    self._diagnose('comment_box_refresh', exc, self.driver, '')
                     raise RuntimeError('El textarea cambio repetidamente antes de escribir; revisa la tarea') from exc
                 from selenium_runner import COMMENT_TEXTAREA_SELECTOR
                 self._log('selenium_retry', 'Textarea obsoleto antes de escribir; buscando el elemento actual')
                 self._check_session()
-                self.textarea = WebDriverWait(
-                    self.driver, 5, ignored_exceptions=(NoSuchElementException, StaleElementReferenceException)
-                ).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, COMMENT_TEXTAREA_SELECTOR))
-                )
+                try:
+                    self.textarea = WebDriverWait(
+                        self.driver, 5, ignored_exceptions=(NoSuchElementException, StaleElementReferenceException)
+                    ).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, COMMENT_TEXTAREA_SELECTOR))
+                    )
+                except Exception as refresh_error:
+                    self._diagnose('comment_box_refresh', refresh_error, self.driver, COMMENT_TEXTAREA_SELECTOR)
+                    raise
         if pending and pending.strip():
             raise PendingCommentError('La caja de comentarios conserva texto; posible bloqueo o comentario pendiente')
-        comentar_en_post(comment, self.driver, self.textarea)
+        kwargs = {}
+        if self.stage_sink is not None:
+            kwargs['on_stage'] = self._mark_stage
+        if self.diagnostic_sink is not None:
+            kwargs['on_diagnostic'] = self._diagnose
+        comentar_en_post(comment, self.driver, self.textarea, **kwargs)
 
     def _check_session(self):
         if self.driver is None:
             return
-        url = (getattr(self.driver, 'current_url', '') or '').lower()
+        try:
+            url = (getattr(self.driver, 'current_url', '') or '').lower()
+        except Exception as exc:
+            self._diagnose('session_check', exc, self.driver)
+            raise
         if '/accounts/login' in url:
-            raise RuntimeError('Sesion vencida: inicia sesion manualmente en el perfil')
+            error = RuntimeError('Sesion vencida: inicia sesion manualmente en el perfil')
+            self._diagnose('session_check', error, self.driver)
+            raise error
         if '/challenge' in url or '/checkpoint' in url:
-            raise RuntimeError('Instagram solicita una verificacion manual')
+            error = RuntimeError('Instagram solicita una verificacion manual')
+            self._diagnose('session_check', error, self.driver)
+            raise error
 
     def close(self):
         try:

@@ -1,8 +1,10 @@
 import json
 import threading
 import time
+from selenium.common.exceptions import WebDriverException
 
 from .db import now, row, rows
+from .diagnostics import DiagnosticStore
 from .runner import PendingCommentError, SeleniumRunner, compose_comment
 from .settings import max_browsers
 
@@ -20,6 +22,7 @@ class Coordinator:
         self.active_profiles = {}
         self.threads = {}
         self.stopping = False
+        self.diagnostics = DiagnosticStore(db)
 
     def _event(self, con, task_id, kind, message):
         con.execute('INSERT INTO events(task_id,kind,message,created_at) VALUES(?,?,?,?)',
@@ -28,6 +31,20 @@ class Coordinator:
     def _runner_event(self, task_id, kind, message):
         with self.db.connect() as con:
             self._event(con, task_id, kind, message)
+
+    def _stage(self, task_id, stage, progress=False):
+        stamp = now()
+        with self.db.connect() as con:
+            con.execute('''INSERT INTO task_runtime_state(task_id,stage,stage_at,last_progress_at)
+                VALUES(?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET
+                stage=excluded.stage,stage_at=excluded.stage_at,
+                last_progress_at=COALESCE(excluded.last_progress_at,task_runtime_state.last_progress_at)''',
+                (task_id, stage, stamp, stamp if progress else None))
+
+    def _diagnostic(self, task_id, account_id, stage, exc, driver, selector):
+        diagnostic_id = self.diagnostics.record(task_id, account_id, stage, exc, driver, selector)
+        self._runner_event(task_id, 'diagnostic', f'Diagnostico {diagnostic_id}: {type(exc).__name__} durante {stage}')
+        return diagnostic_id
 
     def _status(self, con, task_id, status, message=None):
         con.execute('UPDATE tasks SET status=?,updated_at=? WHERE id=?', (status, now(), task_id))
@@ -119,7 +136,14 @@ class Coordinator:
             runner = self.runner_factory()
             if hasattr(runner, 'set_event_sink'):
                 runner.set_event_sink(lambda kind, message: self._runner_event(task_id, kind, message))
+            if hasattr(runner, 'set_stage_sink'):
+                runner.set_stage_sink(lambda stage: self._stage(
+                    task_id, stage, stage in ('page_ready', 'comment_box_ready')))
+            if hasattr(runner, 'set_diagnostic_sink'):
+                runner.set_diagnostic_sink(lambda stage, exc, driver, selector: self._diagnostic(
+                    task_id, task['account_id'], stage, exc, driver, selector))
             runner.open(task['url'], task['profile_arg'])
+            self._stage(task_id, 'comment_count')
             if hasattr(runner, 'read_comment_count'):
                 try:
                     count = runner.read_comment_count()
@@ -133,10 +157,9 @@ class Coordinator:
                             self._event(con, task_id, 'comment_count_observed',
                                         f'Comentarios visibles de Instagram al iniciar: {count}')
                 except Exception as exc:
-                    detail = str(exc).splitlines()[0][:180]
                     with self.db.connect() as con:
                         self._event(con, task_id, 'comment_count_unavailable',
-                                    f'No se pudo leer el contador: {type(exc).__name__}: {detail}')
+                                    f'No se pudo leer el contador: {type(exc).__name__}')
             duration = task['duration_minutes'] * 60
             interval = 60 / task['comments_per_minute']
             next_attempt = self.clock()
@@ -173,6 +196,7 @@ class Coordinator:
                 with self.db.connect() as con:
                     con.execute('UPDATE tasks SET clicked=clicked+1,updated_at=? WHERE id=?', (now(), task_id))
                     self._event(con, task_id, 'clicked', 'Clic en Publicar; confirmacion no verificada')
+                self._stage(task_id, 'publish_click', progress=True)
                 next_attempt = self.clock() + interval
         except Exception as exc:
             self._fail(task_id, exc, base_elapsed + self.clock() - segment_start if 'base_elapsed' in locals() else 0,
@@ -201,12 +225,15 @@ class Coordinator:
             thread.join(max(0, deadline - time.monotonic()))
 
     def _finish(self, task_id, status, elapsed):
+        self._stage(task_id, status)
         with self.db.connect() as con:
             con.execute('UPDATE tasks SET elapsed_seconds=? WHERE id=?', (max(0, elapsed), task_id))
             self._status(con, task_id, status)
 
     def _fail(self, task_id, exc, elapsed, stage='Ejecucion'):
-        message = f'{stage} - {type(exc).__name__}: {str(exc).strip()}'
+        detail = '' if isinstance(exc, WebDriverException) else str(exc).strip()[:240]
+        message = f'{stage} - {type(exc).__name__}: {detail}'
+        self._stage(task_id, 'failed')
         with self.db.connect() as con:
             con.execute('UPDATE tasks SET elapsed_seconds=?,failures=failures+1,last_error=? WHERE id=?',
                         (max(0, elapsed), message, task_id))
