@@ -1,11 +1,13 @@
-from webapp.resources import can_start, estimated_browser_mb, managed_chrome_memory
+from webapp.resources import admission_decision, can_start, estimated_browser_mb, managed_chrome_memory, managed_chrome_usage
 
 
-def _process(root, pid, ppid, rss_kb, args):
+def _process(root, pid, ppid, rss_kb, args, pss_kb=None):
     folder = root / str(pid)
     folder.mkdir()
     (folder / 'status').write_text(f'Name:\tchrome\nPPid:\t{ppid}\nVmRSS:\t{rss_kb} kB\n')
     (folder / 'cmdline').write_bytes(b'\0'.join(arg.encode() for arg in args) + b'\0')
+    if pss_kb is not None:
+        (folder / 'smaps_rollup').write_text(f'Rss: {rss_kb} kB\nPss: {pss_kb} kB\n')
 
 
 def test_only_bot_profile_and_its_children_are_measured(tmp_path):
@@ -29,7 +31,7 @@ def test_first_browser_ignores_unrelated_chrome_and_reserves_memory():
     assert not can_start(metrics, 1)  # Do not start a second until the first is measured.
     assert not can_start(metrics, 2)
     metrics.update(chrome_mb=900, managed_browsers=1)
-    assert estimated_browser_mb(metrics) == 900
+    assert estimated_browser_mb(metrics) == 1080
     assert can_start(metrics, 1)
     metrics['available_mb'] = 1800
     assert not can_start(metrics, 1)
@@ -46,3 +48,46 @@ def test_missing_metrics_fail_closed_on_linux_without_exceptions():
     assert not can_start(metrics, 0)
     metrics['cpu_load'] = 4.5
     assert not can_start(metrics, 0)
+
+
+def test_pss_avoids_shared_rss_overcount_and_excludes_other_profiles(tmp_path):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'accounts' / 'one'
+    other = tmp_path / 'other'
+    _process(proc, 10, 1, 900_000, ['chrome', f'--user-data-dir={ours}'], 550_000)
+    _process(proc, 11, 10, 828_512, ['chrome', '--type=renderer'], 498_000)
+    _process(proc, 20, 1, 2_000_000, ['chrome', f'--user-data-dir={other}'], 1_000_000)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'pss'
+    assert usage['chrome_rss_mb'] == 1688
+    assert usage['chrome_mb'] == 1023
+    assert usage['managed_browsers'] == 1
+
+
+def test_partial_pss_uses_whole_tree_rss_instead_of_mixing(tmp_path):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 400_000)
+    _process(proc, 11, 10, 600_000, ['chrome', '--type=renderer'])
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'rss_fallback'
+    assert usage['chrome_mb'] == 1_400_000 // 1024
+
+
+def test_two_cpu_four_gb_vps_admits_second_only_when_safe():
+    metrics = {'available_mb': 2569, 'chrome_mb': 1000, 'chrome_rss_mb': 1688,
+               'managed_browsers': 1, 'memory_source': 'pss',
+               'cpu_load': 0.78, 'cpu_count': 2, 'enforce': True}
+    decision = admission_decision(metrics, 1)
+    assert decision['allowed']
+    assert decision['estimated_next_mb'] == 1200
+    assert decision['required_mb'] == 2224
+    assert decision['projected_available_mb'] == 1369
+    assert decision['cpu_threshold'] == 4
+    assert not admission_decision(metrics, 2)['allowed']  # Another Chrome is still starting.
+    metrics['chrome_mb'] = 1400
+    blocked = admission_decision(metrics, 1)
+    assert not blocked['allowed']
+    assert 'Memoria insuficiente' in blocked['reason']

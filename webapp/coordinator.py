@@ -6,7 +6,7 @@ from selenium.common.exceptions import WebDriverException
 from .db import now, row, rows
 from .diagnostics import DiagnosticStore
 from .runner import PendingCommentError, SeleniumRunner, SessionUnavailableError, compose_comment
-from .resources import can_start, snapshot
+from .resources import admission_decision, can_start, snapshot
 from .settings import max_browsers
 
 
@@ -138,6 +138,7 @@ class Coordinator:
             metrics = snapshot(self.active_profiles)
             limit = self.browser_limit(con)
             active = set(self.active_profiles)
+            admission = admission_decision(metrics, len(active))
             queued = rows(con, "SELECT t.id,a.profile_path FROM tasks t JOIN accounts a ON a.id=t.account_id WHERE t.status='queued' ORDER BY t.id")
             reasons = {}
             for task in queued:
@@ -145,13 +146,14 @@ class Coordinator:
                     reasons[task['id']] = 'Cuenta ocupada'
                 elif len(active) >= limit:
                     reasons[task['id']] = 'Límite de navegadores'
-                elif not can_start(metrics, len(active)):
-                    reasons[task['id']] = 'Esperando recursos'
+                elif not admission['allowed']:
+                    reasons[task['id']] = admission['reason']
                 else:
                     reasons[task['id']] = 'Próxima en cola'
             return {'active_browsers': len(active), 'running_tasks': sum(isinstance(v, int) for v in self.active_profiles.values()),
                     'queued_tasks': len(queued), 'limit': limit, 'memory_available_mb': metrics['available_mb'],
-                    'chrome_memory_mb': metrics['chrome_mb'], 'cpu_load': metrics['cpu_load'], 'reasons': reasons}
+                      'chrome_memory_mb': metrics.get('chrome_mb'), 'cpu_load': metrics.get('cpu_load'),
+                      'admission': admission, 'reasons': reasons}
 
     def _load_task(self, task_id):
         with self.db.connect() as con:

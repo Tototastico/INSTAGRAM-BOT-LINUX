@@ -306,7 +306,7 @@ function App() {
           <section className="dashboard-section trend-section"><div className="section-heading"><h2>Clics por dia</h2><span className="subtle">Ultimos 7 dias</span></div><div className="trend-chart" role="img" aria-label="Clics en Publicar de los ultimos 7 dias">{trend.map(item => <div className="trend-column" key={item.day} title={`${formatDate(item.day)}: ${item.clicked} clics`}><span>{item.clicked}</span><div className="trend-track"><div style={{ height: `${Math.max(3, item.clicked / maxTrend * 100)}%` }} /></div><small>{item.day.slice(5)}</small></div>)}</div></section>
           <div className="dashboard-grid"><section className="dashboard-section"><div className="section-heading"><h2>Sorteos activos</h2><button className="text-action" onClick={() => setView('sorteos')}>Ver todos <ChevronRight size={16} /></button></div><div className="compact-list">{currentDraws.slice(0, 6).map(draw => <div className="compact-row" key={draw.id}><span className="compact-name">{draw.name}</span><span>{draw.clicked} clics</span></div>)}{!currentDraws.length && <Empty text="No hay sorteos activos." />}</div></section><section className="dashboard-section"><div className="section-heading"><h2>Finalizados</h2></div><div className="compact-list">{sortDraws(finished, 'date_desc').slice(0, 6).map(draw => <div className="compact-row" key={draw.id}><span className="compact-name">{draw.name}</span><span>{formatDeadline(draw)}</span><strong>{draw.clicked} clics</strong></div>)}{!finished.length && <Empty text="No hay sorteos finalizados." />}</div></section></div>
           <div className="section-heading"><h2>Tareas recientes</h2><button className="text-action" onClick={() => setView('actividad')}>Ver actividad <ChevronRight size={16} /></button></div>
-          <div className="scheduler-summary"><strong>Navegadores activos: {data.scheduler.active_browsers ?? 0}/{data.scheduler.limit ?? 1}</strong><span>Tareas en ejecución: {data.scheduler.running_tasks ?? 0}</span><span>En cola: {data.scheduler.queued_tasks ?? 0}</span><span>Memoria disponible: {data.scheduler.memory_available_mb == null ? 'No disponible' : `${data.scheduler.memory_available_mb} MB`}</span><label>Máximo de navegadores <select aria-label="Máximo de navegadores simultáneos" value={data.settings.browser_limit || '1'} onChange={e => perform(() => request('/settings', { method: 'PUT', body: JSON.stringify({ browser_limit: e.target.value }) }))}>{['1', '2', '3', '4', 'auto'].map(value => <option key={value} value={value}>{value === 'auto' ? 'Automático' : value}</option>)}</select></label></div>
+          <SchedulerSummary scheduler={data.scheduler} settings={data.settings} perform={perform} />
           <TaskTable tasks={data.tasks} reasons={data.scheduler.reasons || {}} limit={6} perform={perform} busy={busy} onSelect={id => { setSelectedTask(id); setView('actividad') }} />
         </>}
         {view === 'cuentas' && <>
@@ -343,7 +343,7 @@ function App() {
         {view === 'actividad' && <>
           <PageHeading title="Actividad" subtitle="Seguimiento de ejecuciones e historial de eventos." />
           <div className="assignment-tools"><button className="button secondary" onClick={() => openModal('history')}><Edit3 size={16} />Corregir historial</button></div>
-          <div className="scheduler-summary"><strong>Navegadores activos: {data.scheduler.active_browsers ?? 0}/{data.scheduler.limit ?? 1}</strong><span>Tareas en ejecución: {data.scheduler.running_tasks ?? 0}</span><span>En cola: {data.scheduler.queued_tasks ?? 0}</span><span>Memoria disponible: {data.scheduler.memory_available_mb == null ? 'No disponible' : `${data.scheduler.memory_available_mb} MB`}</span><label>Máximo de navegadores <select aria-label="Máximo de navegadores simultáneos" value={data.settings.browser_limit || '1'} onChange={e => perform(() => request('/settings', { method: 'PUT', body: JSON.stringify({ browser_limit: e.target.value }) }))}>{['1', '2', '3', '4', 'auto'].map(value => <option key={value} value={value}>{value === 'auto' ? 'Automático' : value}</option>)}</select></label></div>
+          <SchedulerSummary scheduler={data.scheduler} settings={data.settings} perform={perform} />
           <TaskTable tasks={data.tasks} reasons={data.scheduler.reasons || {}} perform={perform} busy={busy} onSelect={setSelectedTask} selected={task?.id} />
           {task?.last_error && <section className="task-error-detail" role="alert"><div><CircleAlert size={17} /><strong>Detalle de la tarea #{task.id}</strong></div><pre>{task.last_error}</pre></section>}
           <Diagnostics task={task} />
@@ -370,6 +370,27 @@ function Field({ label, value, onChange, type = 'text', ...props }) {
 
 function PageHeading({ title, subtitle, action, onAction }) {
   return <div className="page-heading"><div><div className="eyebrow">GESTION</div><h1>{title}</h1><p>{subtitle}</p></div>{action && <button className="button primary" onClick={onAction}><Plus size={17} />{action}</button>}</div>
+}
+
+function SchedulerSummary({ scheduler, settings, perform }) {
+  const admission = scheduler.admission || {}
+  const mb = value => value == null ? 'No disponible' : `${value} MB`
+  const source = { pss: 'PSS', rss_fallback: 'RSS (PSS no disponible)', none: 'Sin Chrome activo', unknown: 'No disponible' }[admission.memory_source] || 'No disponible'
+  return <div className="scheduler-summary">
+    <strong>Navegadores activos: {scheduler.active_browsers ?? 0}/{scheduler.limit ?? 1}</strong>
+    <span>Tareas en ejecución: {scheduler.running_tasks ?? 0}</span>
+    <span>En cola: {scheduler.queued_tasks ?? 0}</span>
+    <span>RAM disponible: {mb(admission.available_mb)}</span>
+    <span>Chrome gestionado: {mb(admission.chrome_mb)} ({source})</span>
+    <span>RSS sin ajustar: {mb(admission.chrome_rss_mb)}</span>
+    <span>Próximo navegador: {mb(admission.estimated_next_mb)}</span>
+    <span>Reserva del sistema: {mb(admission.system_reserve_mb)}</span>
+    <span>RAM requerida: {mb(admission.required_mb)}</span>
+    <span>Chrome iniciando: {admission.starting_browsers ?? 0}</span>
+    <span>Carga CPU: {admission.cpu_load ?? 'No disponible'} / {admission.cpu_threshold ?? 'No disponible'}</span>
+    <span className="scheduler-reason">Admisión: {admission.reason || 'No disponible'}</span>
+    <label>Máximo de navegadores <select aria-label="Máximo de navegadores simultáneos" value={settings.browser_limit || '1'} onChange={e => perform(() => request('/settings', { method: 'PUT', body: JSON.stringify({ browser_limit: e.target.value }) }))}>{['1', '2', '3', '4', 'auto'].map(value => <option key={value} value={value}>{value === 'auto' ? 'Automático' : value}</option>)}</select></label>
+  </div>
 }
 
 function SearchBox({ value, onChange }) {

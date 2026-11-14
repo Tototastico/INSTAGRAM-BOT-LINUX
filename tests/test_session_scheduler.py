@@ -152,7 +152,10 @@ def test_scheduler_waits_for_memory_then_retries(tmp_path, monkeypatch):
     task = coordinator.create(assignment)
     with db.connect() as con:
         assert row(con, 'SELECT status FROM tasks WHERE id=?', (task,))['status'] == 'queued'
-    assert coordinator.scheduler_status()['reasons'][task] == 'Esperando recursos'
+    status = coordinator.scheduler_status()
+    assert status['reasons'][task].startswith('Memoria insuficiente')
+    assert status['admission']['required_mb'] == 1792
+    assert status['admission']['system_reserve_mb'] == 1024
     metrics['available_mb'] = 2500
     coordinator.dispatch()
     deadline = time.monotonic() + 2
