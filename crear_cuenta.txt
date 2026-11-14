@@ -6,9 +6,9 @@ existente en 127.0.0.1:5901. No usan perfiles del proyecto Windows.
 
 1) En Windows PowerShell, abre el tunel SSH y deja esa ventana abierta:
 
-   ssh -N -o ExitOnForwardFailure=yes -L 15901:127.0.0.1:5901 jarvisadmin@8.198.136.72
+   ssh -N -o ExitOnForwardFailure=yes -L 15901:127.0.0.1:5901 jarvisadmin@88.198.136.72
 
-   En RealVNC Viewer conecta a 127.0.0.1::5901. Los dos puntos dobles indican
+   En RealVNC Viewer conecta a 127.0.0.1::15901. Los dos puntos dobles indican
    el numero de puerto. Autenticate con las credenciales de tu VNC. No abras
    5901 en el firewall ni conectes RealVNC directamente a la IP publica.
 
