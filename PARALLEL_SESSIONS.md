@@ -10,12 +10,12 @@ Los diagnósticos de tareas usan la misma cookie administrativa corta que el nav
 
 ## Comprobar la admisión en Ubuntu
 
-`/api/scheduler` muestra RAM disponible, PSS usado por Chrome del bot, RSS sin ajustar, fuente e intentos de medición, estimación del siguiente navegador, reserva, RAM requerida, carga de CPU y motivo de rechazo. PSS reparte las páginas compartidas entre procesos; por eso puede ser menor que la suma RSS. Si un proceso termina mientras se lee `/proc`, se reconstruye el árbol y se repite una muestra completa, hasta tres intentos. No se suman valores PSS de muestras distintas. Si persiste la rotación de procesos, se usa RSS y el panel indica `RSS (procesos transitorios)`. Si un proceso sigue vivo pero su `smaps_rollup` no es legible, se usa RSS y se indica `RSS (PSS inaccesible en un proceso activo)`. Si tampoco se conoce su RSS, no se admite otro navegador. La swap no se cuenta como RAM disponible para admitir navegadores.
+`/api/scheduler` muestra RAM disponible, PSS usado por Chrome del bot, RSS sin ajustar, fuente e intentos de medición, estimación del siguiente navegador, reserva, RAM requerida, carga de CPU y motivo de rechazo. También muestra cuántos PID integraron la última muestra, cuántos desaparecieron o provocaron un reintento, cuántos procesos vivos carecen de PSS y cuántos eran zombis o estaban terminados. PSS reparte las páginas compartidas entre procesos; por eso puede ser menor que la suma RSS. Si un proceso termina mientras se lee `/proc`, se reconstruye el árbol y se repite una muestra completa, hasta tres intentos. Un proceso sin `VmRSS` se comprueba antes de tratarlo como memoria desconocida; los zombis y terminados no consumen memoria activa. No se suman valores PSS de muestras distintas. Si persiste la rotación de procesos, se usa RSS de los supervivientes más una reserva por los PID desaparecidos (su último RSS o 768 MB si faltaba); el panel indica `RSS (procesos transitorios)`. Si un proceso sigue vivo pero su `smaps_rollup` no es legible, se usa RSS y se indica `RSS (PSS inaccesible en un proceso activo)`. Si tampoco se conoce su RSS, no se admite otro navegador. La swap no se cuenta como RAM disponible para admitir navegadores.
 
 Con una tarea activa, comprobar la medición desde el mismo usuario del servicio, sustituyendo el perfil por el de esa tarea:
 
 ```bash
-cd /opt/instagram-bot
+cd /home/jarvisadmin/apps/instagram-bot-linux
 sudo -u jarvisadmin .venv/bin/python -c "from webapp.resources import snapshot, admission_decision; m=snapshot(['/home/jarvisadmin/instagram-bot-data/accounts/cuenta2']); print(m); print(admission_decision(m, 1))"
 ```
 
@@ -26,7 +26,7 @@ La segunda cuenta se admite sólo si `MemAvailable` cubre la reserva de 1024 MB 
 No ejecutar durante una tarea activa. Revisar primero el estado y tomar un respaldo consistente de SQLite con su API de backup. No copiar un archivo WAL activo con `cp`.
 
 ```bash
-cd /opt/instagram-bot
+cd /home/jarvisadmin/apps/instagram-bot-linux
 git fetch origin main
 git switch main
 git pull --ff-only origin main

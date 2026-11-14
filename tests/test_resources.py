@@ -5,13 +5,14 @@ from pathlib import Path
 from webapp.resources import admission_decision, can_start, estimated_browser_mb, managed_chrome_memory, managed_chrome_usage
 
 
-def _process(root, pid, ppid, rss_kb, args, pss_kb=None):
+def _process(root, pid, ppid, rss_kb, args, pss_kb=None, state='S'):
     folder = root / str(pid)
     folder.mkdir()
-    (folder / 'status').write_text(f'Name:\tchrome\nPPid:\t{ppid}\nVmRSS:\t{rss_kb} kB\n')
+    rss_line = '' if rss_kb is None else f'VmRSS:\t{rss_kb} kB\n'
+    (folder / 'status').write_text(f'Name:\tchrome\nState:\t{state}\nPPid:\t{ppid}\n{rss_line}')
     (folder / 'cmdline').write_bytes(b'\0'.join(arg.encode() for arg in args) + b'\0')
     if pss_kb is not None:
-        (folder / 'smaps_rollup').write_text(f'Rss: {rss_kb} kB\nPss: {pss_kb} kB\n')
+        (folder / 'smaps_rollup').write_text(f'Pss: {pss_kb} kB\n')
 
 
 def test_only_bot_profile_and_its_children_are_measured(tmp_path):
@@ -100,6 +101,66 @@ def test_disappearing_child_rebuilds_tree_and_retries_complete_pss(tmp_path, mon
     assert decision['sampling_attempts'] == 2
 
 
+def test_missing_vmrss_pid_exits_among_thirteen_valid_chrome_processes(tmp_path, monkeypatch):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 65000, 1, 300_000, ['chrome', f'--user-data-dir={ours}'], 200_000)
+    for pid in range(65001, 65013):
+        _process(proc, pid, 65000, 100_000, ['chrome', '--type=renderer'], 70_000)
+    _process(proc, 66110, 65000, None, ['chrome', '--type=renderer'])
+    original = Path.read_text
+
+    def racing_read(path, *args, **kwargs):
+        if path == proc / '66110' / 'smaps_rollup':
+            shutil.rmtree(proc / '66110')
+            raise ProcessLookupError(errno.ESRCH, 'No such process', str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', racing_read)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'pss'
+    assert usage['chrome_mb'] == 1_040_000 // 1024
+    assert usage['chrome_rss_mb'] == 1_500_000 // 1024
+    assert usage['sampling_attempts'] == 2
+    assert usage['pid_detected'] == 13
+    assert usage['pid_disappeared'] == 1
+    assert usage['pid_retried'] == 1
+    assert usage['pid_unmeasurable'] == 0
+    assert admission_decision({'available_mb': 2569, **usage,
+                               'cpu_load': 0.78, 'cpu_count': 2, 'enforce': True}, 1)['allowed']
+
+
+def test_zombie_and_terminated_without_vmrss_are_excluded_without_fallback(tmp_path):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 500_000)
+    _process(proc, 11, 10, None, ['chrome', '--type=renderer'], state='Z')
+    _process(proc, 12, 10, None, ['chrome', '--type=renderer'], state='X')
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'pss'
+    assert usage['sampling_attempts'] == 1
+    assert usage['chrome_mb'] == 500_000 // 1024
+    assert usage['pid_detected'] == 3
+    assert usage['pid_zombie'] == 1
+    assert usage['pid_terminated'] == 1
+    assert usage['pid_unmeasurable'] == 0
+
+
+def test_live_process_without_vmrss_can_still_be_measured_by_pss(tmp_path):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 500_000)
+    _process(proc, 11, 10, None, ['chrome', '--type=renderer'], 200_000)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'pss'
+    assert usage['chrome_mb'] == 700_000 // 1024
+    assert usage['chrome_rss_mb'] is None
+    assert usage['pid_unmeasurable'] == 0
+
+
 def test_live_process_with_inaccessible_pss_keeps_conservative_rss(tmp_path, monkeypatch):
     proc = tmp_path / 'proc'
     proc.mkdir()
@@ -167,6 +228,57 @@ def test_repeated_churn_uses_labeled_rss_fallback(tmp_path, monkeypatch):
     assert usage['memory_source'] == 'rss_transient'
     assert usage['sampling_attempts'] == 3
     assert usage['chrome_mb'] == 1_400_000 // 1024
+    assert usage['pid_disappeared'] == 3
+    assert usage['pid_retried'] == 2
+    assert usage['transient_reserved_mb'] == 586
+
+
+def test_repeated_churn_without_vmrss_gets_conservative_transient_reserve(tmp_path, monkeypatch):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 400_000)
+    _process(proc, 11, 10, None, ['chrome', '--type=renderer'])
+    original = Path.read_text
+
+    def racing_read(path, *args, **kwargs):
+        if path.parent.parent == proc and path.name == 'smaps_rollup' and path.parent.name in {'11', '12', '13'}:
+            next_pid = int(path.parent.name) + 1
+            shutil.rmtree(path.parent)
+            _process(proc, next_pid, 10, None, ['chrome', '--type=renderer'])
+            raise ProcessLookupError(errno.ESRCH, 'process ended', str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', racing_read)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'rss_transient'
+    assert usage['chrome_rss_mb'] == 800_000 // 1024
+    assert usage['chrome_mb'] == 800_000 // 1024 + 768
+    assert usage['transient_reserved_mb'] == 768
+    assert usage['pid_unmeasurable'] == 0
+    assert not admission_decision({'available_mb': 2000, **usage,
+                                   'cpu_load': 0.5, 'cpu_count': 2, 'enforce': True}, 1)['allowed']
+
+
+def test_esrch_with_still_live_process_and_unknown_rss_fails_closed(tmp_path, monkeypatch):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 400_000)
+    _process(proc, 11, 10, None, ['chrome', '--type=renderer'])
+    original = Path.read_text
+
+    def missing_rollup(path, *args, **kwargs):
+        if path == proc / '11' / 'smaps_rollup':
+            raise ProcessLookupError(errno.ESRCH, 'rollup missing', str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', missing_rollup)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'unavailable'
+    assert usage['sampling_attempts'] == 1
+    assert usage['pid_unmeasurable'] == 1
+    assert usage['pid_disappeared'] == 0
 
 
 def test_live_process_with_unknown_pss_and_rss_fails_closed(tmp_path):
@@ -179,6 +291,7 @@ def test_live_process_with_unknown_pss_and_rss_fails_closed(tmp_path):
     usage = managed_chrome_usage(proc, [ours])
     assert usage['memory_source'] == 'unavailable'
     assert usage['chrome_mb'] is None
+    assert usage['pid_unmeasurable'] == 1
     metrics = {'available_mb': 4000, **usage, 'cpu_load': 0.5, 'cpu_count': 2, 'enforce': True}
     assert not can_start(metrics, 1)
 

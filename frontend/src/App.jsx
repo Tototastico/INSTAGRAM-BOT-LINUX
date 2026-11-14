@@ -383,6 +383,12 @@ function SchedulerSummary({ scheduler, settings, perform }) {
     <span>RAM disponible: {mb(admission.available_mb)}</span>
     <span>Chrome gestionado: {mb(admission.chrome_mb)} ({source})</span>
     <span>Intentos de medición: {admission.sampling_attempts ?? 'No disponible'}</span>
+    <span>PID detectados: {admission.pid_detected ?? 'No disponible'}</span>
+    <span>PID desaparecidos: {admission.pid_disappeared ?? 'No disponible'}</span>
+    <span>PID reintentados: {admission.pid_retried ?? 'No disponible'}</span>
+    <span>PID sin PSS: {admission.pid_unmeasurable ?? 'No disponible'}</span>
+    <span>PID zombis/terminados: {(admission.pid_zombie == null || admission.pid_terminated == null) ? 'No disponible' : `${admission.pid_zombie}/${admission.pid_terminated}`}</span>
+    <span>Reserva por PID transitorios: {mb(admission.transient_reserved_mb)}</span>
     <span>RSS sin ajustar: {mb(admission.chrome_rss_mb)}</span>
     <span>Próximo navegador: {mb(admission.estimated_next_mb)}</span>
     <span>Reserva del sistema: {mb(admission.system_reserve_mb)}</span>
