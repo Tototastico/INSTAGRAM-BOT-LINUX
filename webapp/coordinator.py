@@ -109,7 +109,7 @@ class Coordinator:
             if self.stopping:
                 return
             limit = self.browser_limit(con)
-            metrics = snapshot()
+            metrics = snapshot(self.active_profiles)
             candidates = rows(con, '''SELECT t.id, a.profile_path FROM tasks t
                 JOIN accounts a ON a.id=t.account_id
                 WHERE t.status='queued' AND a.attention_required=0 ORDER BY t.id''')
@@ -135,7 +135,7 @@ class Coordinator:
 
     def scheduler_status(self):
         with self.lock, self.db.connect() as con:
-            metrics = snapshot()
+            metrics = snapshot(self.active_profiles)
             limit = self.browser_limit(con)
             active = set(self.active_profiles)
             queued = rows(con, "SELECT t.id,a.profile_path FROM tasks t JOIN accounts a ON a.id=t.account_id WHERE t.status='queued' ORDER BY t.id")

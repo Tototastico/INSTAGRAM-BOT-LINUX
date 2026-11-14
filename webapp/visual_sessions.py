@@ -120,7 +120,7 @@ class VisualSessions:
                     raise VisualSessionError('La cuenta esta en uso por una tarea o sesion visual')
                 from .resources import can_start, snapshot
                 if len(self.coordinator.active_profiles) >= self.coordinator.browser_limit(con) or not can_start(
-                        snapshot(), len(self.coordinator.active_profiles)):
+                        snapshot(self.coordinator.active_profiles), len(self.coordinator.active_profiles)):
                     raise VisualSessionError('No hay capacidad para otro navegador; espera o aumenta el limite')
                 if profile_process_running(profile):
                     raise VisualSessionError('Hay un Chrome manual abierto con este perfil')

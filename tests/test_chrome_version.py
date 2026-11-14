@@ -6,6 +6,7 @@ from webapp import chrome_binary
 
 
 def test_driver_uses_detected_browser_and_major(monkeypatch):
+    monkeypatch.setenv('HEADLESS', 'true')
     received = {}
     sentinel = object()
 

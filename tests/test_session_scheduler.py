@@ -47,7 +47,8 @@ def test_session_probe_requires_positive_evidence_and_detects_wrong_account():
 
 
 def test_resource_admission_uses_available_memory_and_cpu():
-    metrics = {'available_mb': 1100, 'chrome_mb': 900, 'cpu_load': 0.1, 'cpu_count': 2}
+    metrics = {'available_mb': 1100, 'chrome_mb': 900, 'managed_browsers': 1,
+               'cpu_load': 0.1, 'cpu_count': 2, 'enforce': True}
     assert not can_start(metrics, 1)
     metrics['available_mb'] = 3000
     assert can_start(metrics, 1)
@@ -126,3 +127,36 @@ def test_visual_reservation_keeps_same_profile_queued(tmp_path, monkeypatch):
     with db.connect() as con:
         assert row(con, 'SELECT status FROM tasks WHERE id=?', (task,))['status'] == 'queued'
     assert coordinator.scheduler_status()['reasons'][task] == 'Cuenta ocupada'
+
+
+def test_scheduler_waits_for_memory_then_retries(tmp_path, monkeypatch):
+    db = Database(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
+    with db.connect() as con:
+        account = con.execute("INSERT INTO accounts(name,profile_arg,profile_path) VALUES('a','a','a')").lastrowid
+        draw = con.execute("INSERT INTO draws(name,url) VALUES('d','https://www.instagram.com/p/ABC/')").lastrowid
+        assignment = con.execute('''INSERT INTO assignments(account_id,draw_id,duration_minutes,
+            comments_per_minute,tag_count,tags_json) VALUES(?,?,?,?,?,?)''',
+            (account, draw, 1, 1, 1, '["@friend"]')).lastrowid
+    metrics = {'available_mb': 1200, 'chrome_mb': 0, 'managed_browsers': 0,
+               'cpu_load': 0.7, 'cpu_count': 2, 'enforce': True}
+    monkeypatch.setattr('webapp.coordinator.snapshot', lambda _profiles: metrics.copy())
+
+    class Runner:
+        def open(self, *_):
+            raise RuntimeError('controlled stop')
+
+        def close(self):
+            pass
+
+    coordinator = Coordinator(db, Runner)
+    task = coordinator.create(assignment)
+    with db.connect() as con:
+        assert row(con, 'SELECT status FROM tasks WHERE id=?', (task,))['status'] == 'queued'
+    assert coordinator.scheduler_status()['reasons'][task] == 'Esperando recursos'
+    metrics['available_mb'] = 2500
+    coordinator.dispatch()
+    deadline = time.monotonic() + 2
+    while coordinator.threads and time.monotonic() < deadline:
+        time.sleep(0.01)
+    with db.connect() as con:
+        assert row(con, 'SELECT status FROM tasks WHERE id=?', (task,))['status'] == 'failed'
