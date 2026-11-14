@@ -1,3 +1,7 @@
+import errno
+import shutil
+from pathlib import Path
+
 from webapp.resources import admission_decision, can_start, estimated_browser_mb, managed_chrome_memory, managed_chrome_usage
 
 
@@ -63,6 +67,120 @@ def test_pss_avoids_shared_rss_overcount_and_excludes_other_profiles(tmp_path):
     assert usage['chrome_rss_mb'] == 1688
     assert usage['chrome_mb'] == 1023
     assert usage['managed_browsers'] == 1
+    assert usage['sampling_attempts'] == 1
+
+
+def test_disappearing_child_rebuilds_tree_and_retries_complete_pss(tmp_path, monkeypatch):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 900_000, ['chrome', f'--user-data-dir={ours}'], 550_000)
+    _process(proc, 11, 10, 600_000, ['chrome', '--type=renderer'], 300_000)
+    original = Path.read_text
+    vanished = False
+
+    def racing_read(path, *args, **kwargs):
+        nonlocal vanished
+        if path == proc / '11' / 'smaps_rollup' and not vanished:
+            vanished = True
+            shutil.rmtree(proc / '11')
+            raise FileNotFoundError(errno.ENOENT, 'process ended', str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', racing_read)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'pss'
+    assert usage['sampling_attempts'] == 2
+    assert usage['chrome_mb'] == 550_000 // 1024
+    assert usage['chrome_rss_mb'] == 900_000 // 1024
+    decision = admission_decision({'available_mb': 2569, **usage,
+                                   'cpu_load': 0.78, 'cpu_count': 2, 'enforce': True}, 1)
+    assert decision['allowed']
+    assert decision['memory_source'] == 'pss'
+    assert decision['sampling_attempts'] == 2
+
+
+def test_live_process_with_inaccessible_pss_keeps_conservative_rss(tmp_path, monkeypatch):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 400_000)
+    _process(proc, 11, 10, 600_000, ['chrome', '--type=renderer'], 300_000)
+    original = Path.read_text
+
+    def denied_read(path, *args, **kwargs):
+        if path == proc / '11' / 'smaps_rollup':
+            raise PermissionError(errno.EACCES, 'PSS denied', str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', denied_read)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'rss_fallback'
+    assert usage['sampling_attempts'] == 1
+    assert usage['chrome_mb'] == 1_400_000 // 1024
+
+
+def test_multiple_process_turnovers_never_mix_pss_samples(tmp_path, monkeypatch):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 400_000)
+    _process(proc, 11, 10, 600_000, ['chrome', '--type=renderer'], 300_000)
+    original = Path.read_text
+
+    def racing_read(path, *args, **kwargs):
+        if path == proc / '11' / 'smaps_rollup':
+            shutil.rmtree(proc / '11')
+            _process(proc, 12, 10, 500_000, ['chrome', '--type=renderer'], 250_000)
+            raise ProcessLookupError(errno.ESRCH, 'process ended', str(path))
+        if path == proc / '12' / 'smaps_rollup':
+            shutil.rmtree(proc / '12')
+            _process(proc, 13, 10, 400_000, ['chrome', '--type=renderer'], 200_000)
+            raise FileNotFoundError(errno.ENOENT, 'process ended', str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', racing_read)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'pss'
+    assert usage['sampling_attempts'] == 3
+    assert usage['chrome_mb'] == 600_000 // 1024
+
+
+def test_repeated_churn_uses_labeled_rss_fallback(tmp_path, monkeypatch):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 400_000)
+    _process(proc, 11, 10, 600_000, ['chrome', '--type=renderer'], 300_000)
+    original = Path.read_text
+
+    def racing_read(path, *args, **kwargs):
+        if path.parent.parent == proc and path.name == 'smaps_rollup' and path.parent.name in {'11', '12', '13'}:
+            next_pid = int(path.parent.name) + 1
+            shutil.rmtree(path.parent)
+            _process(proc, next_pid, 10, 600_000, ['chrome', '--type=renderer'], 300_000)
+            raise ProcessLookupError(errno.ESRCH, 'process ended', str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'read_text', racing_read)
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'rss_transient'
+    assert usage['sampling_attempts'] == 3
+    assert usage['chrome_mb'] == 1_400_000 // 1024
+
+
+def test_live_process_with_unknown_pss_and_rss_fails_closed(tmp_path):
+    proc = tmp_path / 'proc'
+    proc.mkdir()
+    ours = tmp_path / 'one'
+    _process(proc, 10, 1, 800_000, ['chrome', f'--user-data-dir={ours}'], 400_000)
+    _process(proc, 11, 10, 0, ['chrome', '--type=renderer'])
+    (proc / '11' / 'status').write_text('Name:\tchrome\nPPid:\t10\n')
+    usage = managed_chrome_usage(proc, [ours])
+    assert usage['memory_source'] == 'unavailable'
+    assert usage['chrome_mb'] is None
+    metrics = {'available_mb': 4000, **usage, 'cpu_load': 0.5, 'cpu_count': 2, 'enforce': True}
+    assert not can_start(metrics, 1)
 
 
 def test_partial_pss_uses_whole_tree_rss_instead_of_mixing(tmp_path):

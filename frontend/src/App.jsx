@@ -375,13 +375,14 @@ function PageHeading({ title, subtitle, action, onAction }) {
 function SchedulerSummary({ scheduler, settings, perform }) {
   const admission = scheduler.admission || {}
   const mb = value => value == null ? 'No disponible' : `${value} MB`
-  const source = { pss: 'PSS', rss_fallback: 'RSS (PSS no disponible)', none: 'Sin Chrome activo', unknown: 'No disponible' }[admission.memory_source] || 'No disponible'
+  const source = { pss: 'PSS', rss_fallback: 'RSS (PSS inaccesible en un proceso activo)', rss_transient: 'RSS (procesos transitorios)', none: 'Sin Chrome activo', unknown: 'No disponible' }[admission.memory_source] || 'No disponible'
   return <div className="scheduler-summary">
     <strong>Navegadores activos: {scheduler.active_browsers ?? 0}/{scheduler.limit ?? 1}</strong>
     <span>Tareas en ejecución: {scheduler.running_tasks ?? 0}</span>
     <span>En cola: {scheduler.queued_tasks ?? 0}</span>
     <span>RAM disponible: {mb(admission.available_mb)}</span>
     <span>Chrome gestionado: {mb(admission.chrome_mb)} ({source})</span>
+    <span>Intentos de medición: {admission.sampling_attempts ?? 'No disponible'}</span>
     <span>RSS sin ajustar: {mb(admission.chrome_rss_mb)}</span>
     <span>Próximo navegador: {mb(admission.estimated_next_mb)}</span>
     <span>Reserva del sistema: {mb(admission.system_reserve_mb)}</span>

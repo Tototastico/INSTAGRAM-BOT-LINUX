@@ -10,7 +10,7 @@ Los diagnósticos de tareas usan la misma cookie administrativa corta que el nav
 
 ## Comprobar la admisión en Ubuntu
 
-`/api/scheduler` muestra RAM disponible, PSS usado por Chrome del bot, RSS sin ajustar, fuente de medición, estimación del siguiente navegador, reserva, RAM requerida, carga de CPU y motivo de rechazo. PSS reparte las páginas compartidas entre procesos; por eso puede ser menor que la suma RSS. Si falta `smaps_rollup` para cualquier proceso del árbol, se usa la suma RSS completa y el panel indica `RSS (PSS no disponible)`. La swap no se cuenta como RAM disponible para admitir navegadores.
+`/api/scheduler` muestra RAM disponible, PSS usado por Chrome del bot, RSS sin ajustar, fuente e intentos de medición, estimación del siguiente navegador, reserva, RAM requerida, carga de CPU y motivo de rechazo. PSS reparte las páginas compartidas entre procesos; por eso puede ser menor que la suma RSS. Si un proceso termina mientras se lee `/proc`, se reconstruye el árbol y se repite una muestra completa, hasta tres intentos. No se suman valores PSS de muestras distintas. Si persiste la rotación de procesos, se usa RSS y el panel indica `RSS (procesos transitorios)`. Si un proceso sigue vivo pero su `smaps_rollup` no es legible, se usa RSS y se indica `RSS (PSS inaccesible en un proceso activo)`. Si tampoco se conoce su RSS, no se admite otro navegador. La swap no se cuenta como RAM disponible para admitir navegadores.
 
 Con una tarea activa, comprobar la medición desde el mismo usuario del servicio, sustituyendo el perfil por el de esa tarea:
 
