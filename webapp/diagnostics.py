@@ -1,5 +1,6 @@
 """Private Selenium failure evidence with redacted exception messages."""
 import os
+import json
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -107,6 +108,21 @@ def _category(info, stage, exc, operation):
         return 'navigation', 'Fallo la navegacion a la publicacion.'
     if operation in ('crear_driver', 'document.readyState'):
         return 'browser_state', 'Fallo la preparacion o consulta del navegador.'
+    if stage == 'publish_button_lookup':
+        state = getattr(exc, 'bot_control_state', {}) or {}
+        if state.get('stale_references') and not state.get('button_matches'):
+            return 'stale_reference', 'El DOM reemplazo un elemento durante la busqueda del control.'
+        if not state.get('editor_matches'):
+            return 'editor_changed', 'No se pudo confirmar el editor activo con el comentario esperado.'
+        if state.get('ambiguous'):
+            return 'ambiguous_control', 'Hay mas de un control de publicar junto al editor.'
+        if not state.get('button_matches'):
+            return 'selector_missing', 'No se encontro Post/Publicar junto al editor activo.'
+        if not state.get('visible'):
+            return 'not_visible', 'El control de publicar existe, pero no esta visible.'
+        if not state.get('enabled'):
+            return 'not_interactable', 'El control de publicar esta deshabilitado.'
+        return 'interaction', 'La espera del control de publicar termino sin un control estable.'
     if info['matching_elements'] == 0:
         return 'selector_missing', 'No se encontro la caja con el selector actual; revisa idioma o interfaz.'
     if info['matching_elements'] and info['visible_elements'] == 0:
@@ -156,6 +172,11 @@ class DiagnosticStore:
         category, summary = _category(info, stage, exc, operation)
         error_type = type(exc).__name__[:80]
         error_message = safe_exception_message(exc) if isinstance(exc, WebDriverException) else ''
+        control_state = getattr(exc, 'bot_control_state', {}) or {}
+        allowed = ('editor_matches', 'button_matches', 'visible', 'enabled',
+                   'stale_references', 'ambiguous', 'scope')
+        control_state = json.dumps({key: control_state[key] for key in allowed if key in control_state})
+        control_structure = str(getattr(exc, 'bot_control_structure', '') or '')[:600]
         screenshot_file = None
         page = info['page_url'].lower()
         safe_page = any(part in page for part in ('instagram.com/p/', 'instagram.com/reel/'))
@@ -176,13 +197,13 @@ class DiagnosticStore:
                 (id,task_id,account_id,created_at,stage,error_type,category,summary,
                  page_url,page_title,ready_state,browser_responding,selector,
                  matching_elements,visible_elements,dialog_count,screenshot_file,
-                 operation,condition,error_message)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                 operation,condition,error_message,control_state,control_structure)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (diagnostic_id, task_id, account_id, now(), stage[:80], error_type,
                  category, summary, info['page_url'], info['page_title'], info['ready_state'],
                  info['browser_responding'], selector[:240], info['matching_elements'],
                  info['visible_elements'], info['dialog_count'], screenshot_file,
-                 operation, condition, error_message))
+                 operation, condition, error_message, control_state, control_structure))
         self.prune()
         return diagnostic_id
 
@@ -191,6 +212,7 @@ class DiagnosticStore:
             return rows(con, '''SELECT id,created_at,stage,error_type,category,summary,page_url,
                 page_title,ready_state,browser_responding,selector,matching_elements,
                 visible_elements,dialog_count,operation,condition,error_message,
+                control_state,control_structure,
                 (screenshot_file IS NOT NULL) has_screenshot
                 FROM task_diagnostics WHERE task_id=? ORDER BY created_at DESC LIMIT 20''', (task_id,))
 

@@ -92,6 +92,14 @@ La version actual espera `document.readyState == complete` y busca directamente 
 
 Despues de actualizar el servicio, realiza una sola prueba supervisada en una publicacion propia o autorizada, con VNC privado y una cuenta cuyo perfil no este abierto en otro Chrome. Observa que el foco llegue al editor correcto antes de permitir el envio. Si falla, abre **Diagnostico** en la nueva tarea y comparte el ID, `Operacion`, `Condicion` y `Mensaje tecnico` ocultando cualquier dato de la cuenta. No reanudes la tarea #4 automaticamente ni consideres confirmado un comentario solo por el clic en Publicar.
 
+### Analisis de la tarea #5: boton Post visible, XPath en espanol
+
+La tarea #5 del 14 de noviembre de 2026 llego a escribir el comentario. El selector usado entonces era exactamente `//div[@role="button" and text()="Publicar"]`; la captura muestra el control **Post**. Esa diferencia de idioma explica el `TimeoutException` en `publish_button_lookup`. El `StaleElementReferenceException` anterior fue durante la busqueda del editor y se recupero; no demuestra que el boton estuviera obsoleto. El contador de comentarios no disponible es independiente. No se dispone del DOM real del VPS para confirmar el elemento HTML exacto ni el resultado de un clic.
+
+El localizador actual busca controles `button`, `[role="button"]` e `input[type="submit"]` con etiqueta exacta `Post` o `Publicar`. Busca de nuevo el editor tras escribir, comprueba que sigue activo y que contiene el texto esperado **sin registrar ese texto**, y selecciona un unico control visible y habilitado dentro de su formulario o un ancestro cercano. Vuelve a comprobarlo inmediatamente antes de hacer un solo clic. Si el DOM cambia o la relacion editor/boton no es clara, se detiene. Un error durante el comando de clic deja la cuenta en pausa para revision manual porque el resultado puede ser incierto; no se reintenta el envio automaticamente.
+
+El panel muestra si el control estaba ausente, oculto, deshabilitado, ambiguo o si hubo referencias obsoletas. Guarda solo una representacion estructural depurada del editor y el control (etiquetas, rol, estado y `Post`/`Publicar`), sin `outerHTML`, clases, valores del campo, cookies ni datos de la cuenta. La captura de error mantiene los permisos y retencion privados. Las pruebas locales usan HTML con un editor y boton reemplazados dinamicamente; la confirmacion final requiere una prueba supervisada en el VPS con una publicacion propia o autorizada. No reanudes automaticamente la tarea #5, que conserva un comentario sin publicar en su editor hasta revisar el perfil.
+
 ## Actualizacion, respaldo y restauracion
 
 Antes de actualizar, espera o cancela las tareas activas y detene el servicio. Copia SQLite consistentemente:

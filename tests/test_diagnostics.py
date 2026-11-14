@@ -253,6 +253,44 @@ def test_wrong_comment_field_is_never_typed_into(monkeypatch):
     assert failures == [('comment_typing', 'comment_field.confirm')]
 
 
+def test_disabled_publish_control_has_precise_private_diagnostic(tmp_path, monkeypatch):
+    monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
+    db, task, _, account = seeded_database(tmp_path)
+    error = TimeoutException('button stayed disabled')
+    error.bot_operation = 'publish_button.lookup'
+    error.bot_condition = 'un unico boton Post/Publicar visible y habilitado'
+    error.bot_control_state = {'editor_matches': 1, 'button_matches': 1,
+                               'visible': 1, 'enabled': 0, 'stale_references': 0,
+                               'ambiguous': False, 'scope': 'form'}
+    error.bot_control_structure = '<form><textarea aria-label="[comentario]" /><div role="button">post</div></form>'
+    DiagnosticStore(db).record(task, account, 'publish_button_lookup', error,
+                               Browser('https://www.instagram.com/p/ABC/'),
+                               'button, [role="button"], input[type="submit"]')
+    item = DiagnosticStore(db).for_task(task)[0]
+    assert item['category'] == 'not_interactable'
+    assert '"enabled": 0' in item['control_state']
+    assert '[comentario]' in item['control_structure']
+
+
+@pytest.mark.parametrize(('state', 'category'), [
+    ({'editor_matches': 1, 'button_matches': 0, 'stale_references': 0}, 'selector_missing'),
+    ({'editor_matches': 1, 'button_matches': 1, 'visible': 0}, 'not_visible'),
+    ({'editor_matches': 1, 'button_matches': 0, 'stale_references': 2}, 'stale_reference'),
+    ({'editor_matches': 1, 'button_matches': 2, 'ambiguous': True}, 'ambiguous_control'),
+    ({'editor_matches': 0, 'button_matches': 0}, 'editor_changed'),
+])
+def test_publish_lookup_classifies_control_state(tmp_path, monkeypatch, state, category):
+    monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
+    db, task, _, account = seeded_database(tmp_path)
+    error = TimeoutException('unresolved control')
+    error.bot_operation = 'publish_button.lookup'
+    error.bot_control_state = state
+    DiagnosticStore(db).record(task, account, 'publish_button_lookup', error,
+                               Browser('https://www.instagram.com/p/ABC/'),
+                               'button, [role="button"], input[type="submit"]')
+    assert DiagnosticStore(db).for_task(task)[0]['category'] == category
+
+
 def test_visible_chrome_options_do_not_enable_headless(tmp_path, monkeypatch):
     import selenium_runner
 

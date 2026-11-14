@@ -124,14 +124,15 @@ class Database:
                     selector TEXT NOT NULL, matching_elements INTEGER,
                     visible_elements INTEGER, dialog_count INTEGER,
                     screenshot_file TEXT, operation TEXT NOT NULL DEFAULT '',
-                    condition TEXT NOT NULL DEFAULT '', error_message TEXT NOT NULL DEFAULT ''
+                    condition TEXT NOT NULL DEFAULT '', error_message TEXT NOT NULL DEFAULT '',
+                    control_state TEXT NOT NULL DEFAULT '', control_structure TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_diagnostics_task ON task_diagnostics(task_id, created_at DESC);
             ''')
             diagnostic_columns = {item['name'] for item in con.execute('PRAGMA table_info(task_diagnostics)')}
-            for name in ('operation', 'condition', 'error_message'):
+            for name in ('operation', 'condition', 'error_message', 'control_state', 'control_structure'):
                 if name not in diagnostic_columns:
                     con.execute(f"ALTER TABLE task_diagnostics ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             columns = {item['name'] for item in con.execute('PRAGMA table_info(accounts)')}

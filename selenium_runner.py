@@ -1,6 +1,4 @@
 import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 import time
 import random
@@ -9,6 +7,8 @@ from selenium.common.exceptions import (ElementNotInteractableException,
 from webapp.chrome_binary import chrome_binary_and_major
 from webapp.comment_field import (COMMENT_CANDIDATE_SELECTOR, confirm_comment_field,
                                   ready_comment_field)
+from webapp.publish_button import (PUBLISH_CONTROL_SELECTOR, PublishButtonProbe,
+                                   safe_button_state)
 from webapp.db import profile_path
 from webapp.settings import ensure_private_dir, headless, validate_visual_environment
 from pathlib import Path
@@ -107,10 +107,11 @@ def acceder_caja(url_post, nombre_cuenta, on_log=None, on_stage=None, on_diagnos
         return False, driver, None
 
 
-def comentar_en_post(comentario, driver, textarea, on_stage=None, on_diagnostic=None):
+def comentar_en_post(comentario, driver, textarea, on_stage=None, on_diagnostic=None, on_log=None):
     stage = 'comment_typing'
     operation = 'comment_field.confirm'
     condition = 'editor de comentario visible y habilitado'
+    probe = None
     try:
         if on_stage:
             on_stage(stage)
@@ -126,23 +127,35 @@ def comentar_en_post(comentario, driver, textarea, on_stage=None, on_diagnostic=
         time.sleep(random.uniform(1, 2))
         stage = 'publish_button_lookup'
         operation = 'publish_button.lookup'
-        condition = 'boton Publicar visible y habilitado'
+        condition = 'un unico boton Post/Publicar visible y habilitado junto al editor activo con el texto esperado'
         if on_stage:
             on_stage(stage)
-        publicar_btn = wait.until(EC.element_to_be_clickable(
-            (By.XPATH, '//div[@role="button" and text()="Publicar"]')
-        ))
+        probe = PublishButtonProbe(comentario)
+        _, publicar_btn = wait.until(probe)
+        if on_log:
+            on_log('publish_button_state', str(safe_button_state(probe)))
+        operation = 'publish_button.scroll'
         driver.execute_script("arguments[0].scrollIntoView(true);", publicar_btn)
         time.sleep(0.5)
+        operation = 'publish_button.recheck'
+        current = probe(driver)
+        if not current:
+            raise ElementNotInteractableException('El control de publicar cambio antes del clic')
+        _, publicar_btn = current
+        if on_log:
+            on_log('publish_button_state', str(safe_button_state(probe)))
         stage = 'publish_click'
         operation = 'publish_button.click'
         if on_stage:
             on_stage(stage)
         driver.execute_script("arguments[0].click();", publicar_btn)
-        print("[✓] Comentario enviado correctamente.")
+        print('[+] Clic en publicar ejecutado; resultado aun no verificado.')
     except Exception as exc:
         _operation_error(exc, operation, condition)
+        if probe is not None:
+            exc.bot_control_state = safe_button_state(probe)
+            exc.bot_control_structure = probe.structure
         if on_diagnostic:
-            selector = 'div[role="button"]' if stage == 'publish_button_lookup' else ''
+            selector = PUBLISH_CONTROL_SELECTOR if stage in ('publish_button_lookup', 'publish_click') else ''
             on_diagnostic(stage, exc, driver, selector)
         raise

@@ -1,5 +1,6 @@
 import re
 import os
+import inspect
 from pathlib import Path
 from .comment_field import COMMENT_CANDIDATE_SELECTOR, ready_comment_field
 from .db import profile_path
@@ -170,7 +171,15 @@ class SeleniumRunner:
             kwargs['on_stage'] = self._mark_stage
         if self.diagnostic_sink is not None:
             kwargs['on_diagnostic'] = self._diagnose
-        comentar_en_post(comment, self.driver, self.textarea, **kwargs)
+        if self.event_sink is not None and 'on_log' in inspect.signature(comentar_en_post).parameters:
+            kwargs['on_log'] = self._log
+        try:
+            comentar_en_post(comment, self.driver, self.textarea, **kwargs)
+        except Exception as exc:
+            if getattr(exc, 'bot_operation', '') == 'publish_button.click':
+                raise PendingCommentError(
+                    'Resultado del clic en publicar incierto; revisar manualmente antes de continuar') from exc
+            raise
 
     def _check_session(self):
         if self.driver is None:
