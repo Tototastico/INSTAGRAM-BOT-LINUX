@@ -131,6 +131,7 @@ function App() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [selectedTask, setSelectedTask] = useState(null)
+  const [activityTaskLimit, setActivityTaskLimit] = useState(10)
   const [diagnosticTaskToOpen, setDiagnosticTaskToOpen] = useState(null)
   const [focusedDrawId, setFocusedDrawId] = useState(null)
   const [taskEvents, setTaskEvents] = useState([])
@@ -257,7 +258,10 @@ function App() {
   const visibleDraws = sortDraws(data.draws.filter(x =>
     match(`${x.name} ${x.url} ${x.notes}`) && (drawStatusFilter === 'all' || drawState(x, now) === drawStatusFilter)
   ), drawOrder)
-  const task = data.tasks.find(x => x.id === selectedTask) || data.tasks[0]
+  const recentTasks = [...data.tasks].sort((a, b) => b.id - a.id)
+  const task = data.tasks.find(x => x.id === selectedTask) || recentTasks[0]
+  const activityTasks = recentTasks.slice(0, activityTaskLimit)
+  if (selectedTask && task && !activityTasks.some(item => item.id === task.id)) activityTasks.push(task)
 
   useEffect(() => {
     if (view !== 'sorteos' || focusedDrawId == null) return
@@ -359,7 +363,12 @@ function App() {
           <PageHeading title="Actividad" subtitle="Seguimiento de ejecuciones e historial de eventos." />
           <div className="assignment-tools"><button className="button secondary" onClick={() => openModal('history')}><Edit3 size={16} />Corregir historial</button></div>
           <SchedulerSummary scheduler={data.scheduler} settings={data.settings} perform={perform} />
-          <TaskTable tasks={data.tasks} reasons={data.scheduler.reasons || {}} perform={perform} busy={busy} onSelect={setSelectedTask} selected={task?.id} />
+          <TaskTable tasks={activityTasks} reasons={data.scheduler.reasons || {}} perform={perform} busy={busy} onSelect={setSelectedTask} selected={task?.id} />
+          {recentTasks.length > 10 && <div className="activity-history-actions">
+            <span className="subtle">Mostrando {Math.min(activityTaskLimit, recentTasks.length)} de {recentTasks.length} tareas recientes{activityTasks.length > activityTaskLimit ? ' y la tarea seleccionada' : ''}</span>
+            {activityTaskLimit < recentTasks.length && <button className="button secondary" type="button" onClick={() => setActivityTaskLimit(count => count + 10)}>Mostrar 10 más</button>}
+            {activityTaskLimit > 10 && <button className="button secondary" type="button" onClick={() => setActivityTaskLimit(10)}>Mostrar menos</button>}
+          </div>}
           {task?.last_error && <section className="task-error-detail" role="alert"><div><CircleAlert size={17} /><strong>Detalle de la tarea #{task.id}</strong></div><pre>{task.last_error}</pre></section>}
           <Diagnostics task={task} openInitially={diagnosticTaskToOpen === task?.id} />
           <div className="section-heading activity-heading"><h2>Eventos {task ? `· Tarea #${task.id}` : ''}</h2><span className="subtle">Actualizacion automatica</span></div>
