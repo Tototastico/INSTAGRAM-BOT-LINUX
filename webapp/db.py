@@ -85,7 +85,8 @@ class Database:
                 );
                 CREATE TABLE IF NOT EXISTS draws (
                     id INTEGER PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
-                    notes TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0,
+                    notes TEXT NOT NULL DEFAULT '', extra_text TEXT NOT NULL DEFAULT '',
+                    archived INTEGER NOT NULL DEFAULT 0,
                     end_date TEXT, end_time TEXT, tag_count INTEGER NOT NULL DEFAULT 1,
                     comment_count INTEGER, comment_count_checked_at TEXT
                 );
@@ -161,6 +162,13 @@ class Database:
             if 'session_reason' not in columns:
                 con.execute("ALTER TABLE accounts ADD COLUMN session_reason TEXT NOT NULL DEFAULT ''")
             draw_columns = {item['name'] for item in con.execute('PRAGMA table_info(draws)')}
+            if 'extra_text' not in draw_columns:
+                con.execute("ALTER TABLE draws ADD COLUMN extra_text TEXT NOT NULL DEFAULT ''")
+                # Keep legacy assignment values for audit if several accounts used different text.
+                con.execute('''UPDATE draws SET extra_text=COALESCE((
+                    SELECT s.extra_text FROM assignments s
+                    WHERE s.draw_id=draws.id AND TRIM(s.extra_text)<>''
+                    ORDER BY s.id LIMIT 1), '')''')
             if 'end_date' not in draw_columns:
                 con.execute('ALTER TABLE draws ADD COLUMN end_date TEXT')
             if 'end_time' not in draw_columns:
@@ -223,9 +231,9 @@ class Database:
                 profiles = [profiles]
             url = cfg.get('url_post', '').strip()
             if url and profiles:
-                draw_id = con.execute('INSERT INTO draws(name,url,notes,tag_count) VALUES(?,?,?,?)',
+                draw_id = con.execute('INSERT INTO draws(name,url,notes,tag_count,extra_text) VALUES(?,?,?,?,?)',
                                       ('Sorteo importado', url, 'Importado desde config.json',
-                                       int(cfg.get('etiquetas', 1)))).lastrowid
+                                       int(cfg.get('etiquetas', 1)), cfg.get('comentario', ''))).lastrowid
                 for arg in profiles:
                     resolved = profile_path(arg)
                     account_id = con.execute('INSERT OR IGNORE INTO accounts(name,profile_arg,profile_path) VALUES(?,?,?)',

@@ -44,6 +44,7 @@ def test_legacy_import_once_preserves_profile_and_config(tmp_path):
     assert assignment['extra_text'] == 'Extra'
     with db.connect() as con:
         assert row(con, 'SELECT tag_count FROM draws')['tag_count'] == 1
+        assert row(con, 'SELECT extra_text FROM draws')['extra_text'] == 'Extra'
         assert len(con.execute('SELECT tag FROM tag_library').fetchall()) == len(LEGACY_TAGS)
     assert config.read_text(encoding='utf-8') == content
 
@@ -79,6 +80,58 @@ def test_existing_draws_gain_end_date_and_inherit_mentions(tmp_path):
     assert draw['end_time'] is None
     assert draw['comment_count'] is None
     assert draw['comment_count_checked_at'] is None
+
+
+def test_existing_assignment_text_moves_to_draw_without_deleting_legacy_values(tmp_path):
+    path = tmp_path / 'bot.sqlite3'
+    with sqlite3.connect(path) as con:
+        con.execute('''CREATE TABLE draws(id INTEGER PRIMARY KEY,name TEXT,url TEXT,notes TEXT,
+            archived INTEGER,end_date TEXT,end_time TEXT,tag_count INTEGER,
+            comment_count INTEGER,comment_count_checked_at TEXT)''')
+        con.execute('''CREATE TABLE assignments(id INTEGER PRIMARY KEY,account_id INTEGER,draw_id INTEGER,
+            duration_minutes INTEGER,comments_per_minute REAL,tag_count INTEGER,
+            extra_text TEXT,tags_json TEXT,archived INTEGER DEFAULT 0)''')
+        draw = con.execute("INSERT INTO draws(id,name,url) VALUES(1,'D','https://www.instagram.com/p/ABC/')").lastrowid
+        for text in ('Primer texto', 'Texto distinto'):
+            con.execute('''INSERT INTO assignments(account_id,draw_id,duration_minutes,
+                comments_per_minute,tag_count,extra_text,tags_json) VALUES(?,?,?,?,?,?,?)''',
+                (1, draw, 1, 1, 1, text, '["@amigo"]'))
+    db = Database(path, tmp_path / 'missing.json')
+    db.initialize()
+    with db.connect() as con:
+        assert row(con, 'SELECT extra_text FROM draws WHERE id=?', (draw,))['extra_text'] == 'Primer texto'
+        assert [item[0] for item in con.execute('SELECT extra_text FROM assignments ORDER BY id')] == [
+            'Primer texto', 'Texto distinto']
+    db.initialize()
+    with db.connect() as con:
+        assert row(con, 'SELECT extra_text FROM draws WHERE id=?', (draw,))['extra_text'] == 'Primer texto'
+
+
+def test_draw_text_is_the_only_runtime_source_and_assignment_edits_keep_it(tmp_path, monkeypatch):
+    monkeypatch.setenv('BOT_ACCOUNTS_DIR', str(tmp_path / 'profiles'))
+    app = make_app(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
+    with TestClient(app) as client:
+        draw = client.post('/api/draws', json={
+            'name': 'Sorteo', 'url': 'https://www.instagram.com/p/ABC/',
+            'extra_text': 'Del sorteo'}).json()
+        assert draw['extra_text'] == 'Del sorteo'
+        account = client.post('/api/accounts', json={'name': 'Cuenta', 'profile_arg': 'cuenta-prueba'}).json()
+        client.post('/api/tags', json={'tags': ['@amigo']})
+        payload = {'account_id': account['id'], 'draw_id': draw['id'], 'duration_minutes': 1,
+                   'comments_per_minute': 1, 'tags': ['@amigo'], 'extra_text': 'Ignorar asignacion'}
+        assignment = client.post('/api/assignments', json=payload).json()
+        with app.state.db.connect() as con:
+            assert row(con, 'SELECT extra_text FROM assignments WHERE id=?', (assignment['id'],))['extra_text'] == ''
+            con.execute('UPDATE assignments SET extra_text=? WHERE id=?', ('Valor viejo', assignment['id']))
+            task_id = con.execute('''INSERT INTO tasks(assignment_id,account_id,draw_id,status,created_at,updated_at)
+                VALUES(?,?,?,?,?,?)''', (assignment['id'], account['id'], draw['id'], 'failed', 'x', 'x')).lastrowid
+        assert app.state.coordinator._load_task(task_id)['extra_text'] == 'Del sorteo'
+        assert client.put(f"/api/assignments/{assignment['id']}", json=payload).status_code == 200
+        with app.state.db.connect() as con:
+            assert row(con, 'SELECT extra_text FROM assignments WHERE id=?', (assignment['id'],))['extra_text'] == 'Valor viejo'
+        assert client.put(f"/api/draws/{draw['id']}", json={
+            'name': 'Sorteo', 'url': draw['url'], 'extra_text': 'Actualizado'}).status_code == 200
+        assert app.state.coordinator._load_task(task_id)['extra_text'] == 'Actualizado'
 
 
 def test_reminder_settings_migrate_from_days(tmp_path):
@@ -682,7 +735,7 @@ def test_coordinator_persists_selenium_retry_and_error_type(tmp_path):
     assert task['status'] == 'failed'
     assert task['last_error'].startswith('Comentario - StaleElementReferenceException:')
     assert task['attempts'] == 1 and task['clicked'] == 0
-    assert kinds == ['queued', 'running', 'selenium_retry', 'attempt', 'failed']
+    assert kinds == ['queued', 'running', 'selenium_retry', 'attempt', 'diagnostic', 'failed']
 
 
 def test_duration_and_frequency_repeat_without_extra_post(tmp_path):

@@ -18,3 +18,20 @@
   .field input,.field textarea,.field select{font-size:16px;min-height:44px}
 }
 @media(max-width:370px){.metrics{grid-template-columns:1fr}.top-actions{gap:0}.page-heading{gap:10px}}
+
+.draw-link{color:#1769c2;font-weight:650;text-decoration:underline;text-underline-offset:2px}
+.draw-link:hover{color:#104e93}
+.focused-draw td{background:#e9f3ff}
+.focused-draw:focus{outline:2px solid #1769c2;outline-offset:-2px}
+@media(max-width:650px){
+  .button{min-height:44px;padding:0 14px;font-size:13px}
+  .icon-button{width:44px;height:44px}
+  .icon-button svg{width:20px;height:20px}
+  .row-actions{padding-left:6px;padding-right:6px}
+  .actions-col{min-width:148px}
+  .text-action{min-height:44px;padding:0 8px}
+  .draw-select select,.reminder-setting select,.scheduler-summary select{min-height:44px}
+  .modal-foot{flex-wrap:wrap}
+  .modal-foot .button{flex:1 1 120px}
+  .visual-actions .button,.visual-head .button{min-height:44px}
+}

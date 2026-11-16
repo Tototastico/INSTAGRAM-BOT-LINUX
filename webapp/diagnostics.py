@@ -108,6 +108,10 @@ def _category(info, stage, exc, operation):
         return 'navigation', 'Fallo la navegacion a la publicacion.'
     if operation in ('crear_driver', 'document.readyState'):
         return 'browser_state', 'Fallo la preparacion o consulta del navegador.'
+    if type(exc).__name__ == 'PendingCommentError':
+        return 'pending_comment', 'El editor conserva texto; la tarea se pauso para revision manual.'
+    if type(exc).__name__ == 'SessionUnavailableError':
+        return 'session', 'La sesion requiere revision manual.'
     if stage == 'publish_button_lookup':
         state = getattr(exc, 'bot_control_state', {}) or {}
         if state.get('stale_references') and not state.get('button_matches'):
@@ -180,7 +184,9 @@ class DiagnosticStore:
         screenshot_file = None
         page = info['page_url'].lower()
         safe_page = any(part in page for part in ('instagram.com/p/', 'instagram.com/reel/'))
-        if isinstance(exc, WebDriverException) and safe_page and not info['login_fields'] and info['browser_responding']:
+        evidence_error = isinstance(exc, WebDriverException) or type(exc).__name__ in (
+            'PendingCommentError', 'SessionUnavailableError')
+        if evidence_error and safe_page and not info['login_fields'] and info['browser_responding']:
             root = ensure_private_dir(debug_dir())
             target = root / f'{diagnostic_id}.png'
             try:

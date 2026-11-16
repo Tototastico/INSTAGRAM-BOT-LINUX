@@ -8,6 +8,7 @@ from webapp.api import make_app
 from webapp.db import Database, now
 from webapp.diagnostics import DiagnosticStore, safe_exception_message, safe_url
 from webapp.settings import validate_visual_environment
+from webapp.runner import PendingCommentError
 
 
 class Element:
@@ -113,6 +114,24 @@ def test_login_skips_capture_and_retention_removes_old_evidence(tmp_path, monkey
     store.prune()
     assert not image.exists()
     assert old_id not in [item['id'] for item in store.for_task(task)]
+
+
+def test_pending_comment_pause_keeps_private_screenshot_only_on_post(tmp_path, monkeypatch):
+    monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'private-debug'))
+    db, task, other, account = seeded_database(tmp_path)
+    store = DiagnosticStore(db)
+    browser = Browser('https://www.instagram.com/p/ABC/?token=private')
+    diagnostic_id = store.record(task, account, 'comment_box_pending_check',
+                                 PendingCommentError('Comentario pendiente'), browser)
+    item = store.for_task(task)[0]
+    assert item['category'] == 'pending_comment'
+    assert item['page_url'] == 'https://www.instagram.com/p/ABC/'
+    assert item['has_screenshot'] == 1
+    assert browser.screenshots == 1
+    assert store.screenshot(other, diagnostic_id) is None
+    login = Browser('https://www.instagram.com/accounts/login/?token=private')
+    store.record(task, account, 'session_check', PendingCommentError('Sesion requerida'), login)
+    assert login.screenshots == 0
 
 
 def test_login_modal_on_post_url_skips_capture(tmp_path, monkeypatch):
@@ -334,5 +353,45 @@ def test_coordinator_links_selenium_failure_to_correct_task(tmp_path, monkeypatc
     while time.monotonic() < deadline and not coordinator.diagnostics.for_task(task):
         time.sleep(0.01)
     assert len(coordinator.diagnostics.for_task(task)) == 1
+    assert coordinator.diagnostics.for_task(other) == []
+    coordinator.shutdown()
+
+
+def test_paused_task_records_diagnostic_and_capture_before_browser_closes(tmp_path, monkeypatch):
+    import time
+    from webapp.coordinator import Coordinator
+
+    monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
+    db, task, other, account = seeded_database(tmp_path)
+    browser = Browser('https://www.instagram.com/p/ABC/?token=private')
+
+    class PausingRunner:
+        driver = browser
+
+        def open(self, url, profile):
+            pass
+
+        def post(self, comment):
+            raise PendingCommentError('Comentario pendiente')
+
+        def close(self):
+            pass
+
+    with db.connect() as con:
+        con.execute("UPDATE tasks SET status='queued' WHERE id=?", (task,))
+    coordinator = Coordinator(db, PausingRunner)
+    coordinator.dispatch()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and task in coordinator.threads:
+        time.sleep(0.01)
+    with db.connect() as con:
+        status = con.execute('SELECT status FROM tasks WHERE id=?', (task,)).fetchone()[0]
+        stage = con.execute('SELECT stage FROM task_runtime_state WHERE task_id=?', (task,)).fetchone()[0]
+    evidence = coordinator.diagnostics.for_task(task)
+    assert status == 'paused'
+    assert stage == 'paused'
+    assert len(evidence) == 1
+    assert evidence[0]['category'] == 'pending_comment'
+    assert evidence[0]['has_screenshot'] == 1
     assert coordinator.diagnostics.for_task(other) == []
     coordinator.shutdown()

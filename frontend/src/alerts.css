@@ -13,6 +13,7 @@
 
 .attention-banner > svg { flex: none; }
 .attention-banner > div { min-width: 0; flex: 1; }
+.attention-banner .attention-actions { display: flex; gap: 8px; align-items: center; flex: none; }
 .attention-banner strong { font-size: 12px; }
 .attention-banner p { margin: 4px 0 0; font-size: 11px; overflow-wrap: anywhere; }
 .attention-banner .button { border-color: #e8cbb5; }
@@ -20,5 +21,6 @@
 
 @media (max-width: 650px) {
   .attention-banner { align-items: flex-start; flex-wrap: wrap; }
-  .attention-banner .button { margin-left: 31px; }
+  .attention-banner .attention-actions { width: 100%; flex-wrap: wrap; padding-left: 31px; }
+  .attention-banner .button { flex: 1 1 140px; }
 }

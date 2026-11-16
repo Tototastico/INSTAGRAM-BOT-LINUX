@@ -158,7 +158,7 @@ class Coordinator:
     def _load_task(self, task_id):
         with self.db.connect() as con:
             return row(con, '''SELECT t.*, s.duration_minutes, s.comments_per_minute,
-                d.tag_count, s.extra_text, s.tags_json, a.profile_arg, a.name account_name,
+                d.tag_count, d.extra_text, s.tags_json, a.profile_arg, a.name account_name,
                 a.session_status, d.url
                 FROM tasks t JOIN assignments s ON s.id=t.assignment_id
                 JOIN accounts a ON a.id=t.account_id JOIN draws d ON d.id=t.draw_id
@@ -166,7 +166,24 @@ class Coordinator:
 
     def _run(self, task_id, path):
         runner = None
+        task = None
+        diagnostic_recorded = False
         segment_start = self.clock()
+        def record_from_runner(stage, exc, driver, selector):
+            nonlocal diagnostic_recorded
+            diagnostic_id = self._diagnostic(task_id, task['account_id'], stage, exc, driver, selector)
+            diagnostic_recorded = True
+            return diagnostic_id
+
+        def record_unhandled(exc, stage):
+            if diagnostic_recorded:
+                return
+            if task is not None:
+                try:
+                    self._diagnostic(task_id, task['account_id'], stage, exc,
+                                     getattr(runner, 'driver', None), '')
+                except Exception:
+                    pass  # An evidence storage failure cannot change the task outcome.
         try:
             task = self._load_task(task_id)
             base_elapsed = task['elapsed_seconds']
@@ -180,8 +197,7 @@ class Coordinator:
                 runner.set_stage_sink(lambda stage: self._stage(
                     task_id, stage, stage in ('page_ready', 'comment_box_ready')))
             if hasattr(runner, 'set_diagnostic_sink'):
-                runner.set_diagnostic_sink(lambda stage, exc, driver, selector: self._diagnostic(
-                    task_id, task['account_id'], stage, exc, driver, selector))
+                runner.set_diagnostic_sink(record_from_runner)
             runner.open(task['url'], task['profile_arg'])
             self._stage(task_id, 'comment_count')
             if hasattr(runner, 'read_comment_count'):
@@ -225,15 +241,19 @@ class Coordinator:
                 with self.db.connect() as con:
                     con.execute('UPDATE tasks SET attempts=attempts+1,updated_at=? WHERE id=?', (now(), task_id))
                     self._event(con, task_id, 'attempt', comment)
+                diagnostic_recorded = False
                 try:
                     runner.post(comment)
                 except PendingCommentError as exc:
+                    record_unhandled(exc, 'comment_box_pending_check')
                     self._pause_for_attention(task_id, exc, base_elapsed + self.clock() - segment_start)
                     break
                 except SessionUnavailableError as exc:
+                    record_unhandled(exc, 'session_check')
                     self._pause_session(task_id, exc, base_elapsed + self.clock() - segment_start)
                     break
                 except Exception as exc:
+                    record_unhandled(exc, 'comment')
                     self._fail(task_id, exc, base_elapsed + self.clock() - segment_start, 'Comentario')
                     break
                 with self.db.connect() as con:
@@ -242,8 +262,10 @@ class Coordinator:
                 self._stage(task_id, 'publish_click', progress=True)
                 next_attempt = self.clock() + interval
         except SessionUnavailableError as exc:
+            record_unhandled(exc, 'session_check')
             self._pause_session(task_id, exc, base_elapsed + self.clock() - segment_start if 'base_elapsed' in locals() else 0)
         except Exception as exc:
+            record_unhandled(exc, 'execution')
             self._fail(task_id, exc, base_elapsed + self.clock() - segment_start if 'base_elapsed' in locals() else 0,
                        'Inicio o ejecucion')
         finally:
@@ -286,6 +308,7 @@ class Coordinator:
 
     def _pause_for_attention(self, task_id, exc, elapsed):
         message = str(exc)
+        self._stage(task_id, 'paused')
         with self.lock, self.db.connect() as con:
             task = row(con, 'SELECT account_id FROM tasks WHERE id=?', (task_id,))
             account_id = task['account_id']
@@ -301,6 +324,7 @@ class Coordinator:
                 self._status(con, pending['id'], 'paused', 'Pausada: la cuenta requiere revision')
 
     def _pause_session(self, task_id, exc, elapsed):
+        self._stage(task_id, 'paused')
         with self.lock, self.db.connect() as con:
             task = row(con, 'SELECT account_id FROM tasks WHERE id=?', (task_id,))
             con.execute('''UPDATE accounts SET session_status=?,session_checked_at=?,

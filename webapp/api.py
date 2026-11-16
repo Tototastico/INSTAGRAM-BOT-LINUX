@@ -45,6 +45,7 @@ class DrawIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     url: str = Field(min_length=1, max_length=500)
     notes: str = Field(default='', max_length=2000)
+    extra_text: str = Field(default='', max_length=1000)
     end_date: date | None = None
     end_time: str | None = Field(default=None, pattern=r'^([01]\d|2[0-3]):[0-5]\d$')
     tag_count: int = Field(default=1, ge=0, le=100)
@@ -76,7 +77,6 @@ class AssignmentIn(BaseModel):
     draw_id: int
     duration_minutes: int = Field(ge=0, le=10080)
     comments_per_minute: float = Field(gt=0, le=60)
-    extra_text: str = Field(default='', max_length=1000)
     tags: list[str] = Field(min_length=1)
 
     @field_validator('tags')
@@ -496,8 +496,8 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
     @app.post('/api/draws', status_code=201)
     def add_draw(data: DrawIn):
         with db.connect() as con:
-            item_id = con.execute('INSERT INTO draws(name,url,notes,end_date,end_time,tag_count) VALUES(?,?,?,?,?,?)',
-                                  (data.name.strip(), data.url, data.notes,
+            item_id = con.execute('INSERT INTO draws(name,url,notes,extra_text,end_date,end_time,tag_count) VALUES(?,?,?,?,?,?,?)',
+                                  (data.name.strip(), data.url, data.notes, data.extra_text,
                                    data.end_date.isoformat() if data.end_date else None, data.end_time, data.tag_count)).lastrowid
             return require(con, 'draws', item_id)
 
@@ -505,10 +505,11 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
     def edit_draw(item_id: int, data: DrawIn):
         with db.connect() as con:
             existing = require(con, 'draws', item_id)
-            if data.url != existing['url'] or data.tag_count != existing['tag_count']:
+            extra_text = data.extra_text if 'extra_text' in data.model_fields_set else existing['extra_text']
+            if data.url != existing['url'] or data.tag_count != existing['tag_count'] or extra_text != existing['extra_text']:
                 check_inactive(con, draw_id=item_id)
-            con.execute('UPDATE draws SET name=?,url=?,notes=?,end_date=?,end_time=?,tag_count=? WHERE id=?',
-                        (data.name.strip(), data.url, data.notes,
+            con.execute('UPDATE draws SET name=?,url=?,notes=?,extra_text=?,end_date=?,end_time=?,tag_count=? WHERE id=?',
+                        (data.name.strip(), data.url, data.notes, extra_text,
                          data.end_date.isoformat() if data.end_date else None, data.end_time, data.tag_count, item_id))
             con.execute('UPDATE assignments SET tag_count=? WHERE draw_id=?', (data.tag_count, item_id))
             return require(con, 'draws', item_id)
@@ -544,10 +545,10 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
                 raise HTTPException(409, 'Selecciona etiquetas de la biblioteca')
             try:
                 item_id = con.execute('''INSERT INTO assignments
-                    (account_id,draw_id,duration_minutes,comments_per_minute,tag_count,extra_text,tags_json)
-                    VALUES(?,?,?,?,?,?,?)''',
+                    (account_id,draw_id,duration_minutes,comments_per_minute,tag_count,tags_json)
+                    VALUES(?,?,?,?,?,?)''',
                     (data.account_id, data.draw_id, data.duration_minutes, data.comments_per_minute,
-                     draw['tag_count'], data.extra_text, json.dumps(data.tags))).lastrowid
+                     draw['tag_count'], json.dumps(data.tags))).lastrowid
             except sqlite3.IntegrityError:
                 raise HTTPException(409, 'Esa cuenta ya esta vinculada al sorteo')
             return {'id': item_id}
@@ -566,9 +567,9 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
                 raise HTTPException(409, 'Selecciona etiquetas de la biblioteca')
             try:
                 con.execute('''UPDATE assignments SET account_id=?,draw_id=?,duration_minutes=?,
-                    comments_per_minute=?,tag_count=?,extra_text=?,tags_json=? WHERE id=?''',
+                    comments_per_minute=?,tag_count=?,tags_json=? WHERE id=?''',
                     (data.account_id, data.draw_id, data.duration_minutes, data.comments_per_minute,
-                     draw['tag_count'], data.extra_text, json.dumps(data.tags), item_id))
+                     draw['tag_count'], json.dumps(data.tags), item_id))
             except sqlite3.IntegrityError:
                 raise HTTPException(409, 'Esa cuenta ya esta vinculada al sorteo')
             return {'id': item_id}
