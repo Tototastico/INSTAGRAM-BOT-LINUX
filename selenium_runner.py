@@ -2,8 +2,10 @@ import undetected_chromedriver as uc
 from selenium.webdriver.support.ui import WebDriverWait
 import time
 import random
+import threading
 from selenium.common.exceptions import (ElementNotInteractableException,
-                                        StaleElementReferenceException, NoSuchElementException)
+                                        StaleElementReferenceException, NoSuchElementException,
+                                        WebDriverException)
 from webapp.chrome_binary import chrome_binary_and_major
 from webapp.comment_field import (COMMENT_CANDIDATE_SELECTOR, confirm_comment_field,
                                   ready_comment_field)
@@ -11,9 +13,11 @@ from webapp.publish_button import (PUBLISH_CONTROL_SELECTOR, PublishButtonProbe,
                                    safe_button_state)
 from webapp.db import profile_path
 from webapp.settings import ensure_private_dir, headless, validate_visual_environment
+from webapp.startup_health import startup_snapshot
 from pathlib import Path
 
 COMMENT_TEXTAREA_SELECTOR = COMMENT_CANDIDATE_SELECTOR
+_chrome_start_lock = threading.Lock()
 
 
 def _operation_error(exc, operation, condition=''):
@@ -45,8 +49,18 @@ def crear_driver(nombre_cuenta):
         validate_visual_environment()
     options.add_argument("--disable-dev-shm-usage")
 
-    driver = uc.Chrome(options=options, browser_executable_path=chrome_executable,
-                       version_main=chrome_major, use_subprocess=False)
+    # uc.Chrome patches a shared driver binary before launching Chrome.
+    # Keep concurrent accounts from modifying it during another startup.
+    with _chrome_start_lock:
+        try:
+            driver = uc.Chrome(options=options, browser_executable_path=chrome_executable,
+                               version_main=chrome_major, use_subprocess=False)
+        except WebDriverException as exc:
+            try:
+                exc.bot_control_state = startup_snapshot(perfil_path)
+            except Exception:
+                exc.bot_control_state = {}
+            raise
     return driver
 
 def acceder_caja(url_post, nombre_cuenta, on_log=None, on_stage=None, on_diagnostic=None):

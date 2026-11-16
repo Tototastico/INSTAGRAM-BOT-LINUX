@@ -41,3 +41,13 @@ El primer arranque añade `session_user` y `session_reason` a la base sin altera
 ## Vuelta atrás
 
 Detener nuevas tareas, esperar o cancelar las activas, respaldar la base con SQLite, detener el servicio, volver al commit anterior y compilar su frontend. Si se restaura la base, usar el respaldo del mismo release. Las tareas cuyo comentario pudo haberse enviado se revisan manualmente antes de reanudar. No restaurar perfiles Chrome con el navegador abierto.
+
+## Fallo al iniciar una segunda cuenta
+
+Un `SessionNotCreatedException` en `chrome_start` ocurre antes de navegar a Instagram. Por eso no hay captura de la publicación. El inicio de ChromeDriver se serializa dentro del proceso para que dos tareas no preparen simultáneamente el binario compartido de `undetected-chromedriver`; los navegadores ya iniciados siguen pudiendo trabajar en paralelo. No se reintenta automáticamente una tarea cuyo resultado no se conoce.
+
+El diagnóstico de esa tarea muestra RAM y swap disponibles, espacio en `/tmp` y `/dev/shm`, uso y límite de memoria y procesos del cgroup, contador de procesos terminados por OOM dentro del cgroup y si todavía hay un Chrome usando ese perfil. Son valores numéricos tomados tras la excepción; no guardan ruta de perfil ni argumentos de Chrome. Una medición posterior con `free -h` no prueba los recursos disponibles en el instante del fallo. La swap ocupada tampoco demuestra una fuga: puede contener páginas inactivas de procesos anteriores.
+
+Si vuelve a ocurrir, revisar el diagnóstico nuevo y comparar los contadores de OOM del cgroup antes y después. Desde el VPS, consultar también `sudo journalctl -u instagram-bot -u systemd-oomd --since '15 minutes ago' --no-pager` y `sudo journalctl -k --since '15 minutes ago' --no-pager`. El registro de kernel puede estar vacío aunque el servicio tenga un límite propio de memoria o procesos. Verificar esos límites con `systemctl show instagram-bot -p MemoryMax -p TasksMax -p OOMPolicy`. Consultar `free -h` y `df -h /tmp /dev/shm /home` en el mismo momento.
+
+Chrome guarda cachés dentro de cada perfil en disco. No borrar `Cache`, `Code Cache`, cookies ni otros archivos del perfil mientras Chrome está abierto: puede alterar sesiones existentes. El espacio libre de disco y la RAM disponible se miden por separado; limpiar la caché del perfil no corrige por sí solo un fallo de conexión de ChromeDriver.

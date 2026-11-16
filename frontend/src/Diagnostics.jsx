@@ -16,6 +16,7 @@ const categoryLabels = {
   not_interactable: 'Elemento no interactuable', overlay: 'Ventana superpuesta',
   element_lookup: 'Búsqueda de elemento', visibility: 'Visibilidad del elemento',
   browser_state: 'Estado del navegador', interaction: 'Interacción',
+  browser_start_failed: 'Chrome no inició',
   stale_reference: 'Referencia obsoleta', editor_changed: 'Editor reemplazado',
   ambiguous_control: 'Control ambiguo', not_visible: 'Control no visible',
   pending_comment: 'Comentario pendiente',
@@ -109,7 +110,7 @@ export default function Diagnostics({ task, openInitially = false }) {
         <p>{item.summary}</p>
         <dl><div><dt>Etapa</dt><dd>{stageLabels[item.stage] || item.stage}</dd></div><div><dt>Operación</dt><dd>{item.operation || 'No registrada'}</dd></div><div><dt>Condición</dt><dd>{item.condition || 'No registrada'}</dd></div><div><dt>Error</dt><dd>{item.error_type}</dd></div><div><dt>Selector</dt><dd>{item.selector || 'No aplica'}</dd></div><div><dt>URL</dt><dd>{item.page_url || 'No disponible'}</dd></div><div><dt>Título</dt><dd>{item.page_title || 'No disponible'}</dd></div><div><dt>Documento</dt><dd>{item.ready_state}</dd></div><div><dt>Navegador</dt><dd>{item.browser_responding ? 'Responde' : 'No responde'}</dd></div><div><dt>Elementos / visibles</dt><dd>{item.matching_elements ?? '?'} / {item.visible_elements ?? '?'}</dd></div><div><dt>Diálogos</dt><dd>{item.dialog_count ?? '?'}</dd></div></dl>
         {item.error_message && <details><summary>Mensaje técnico de Selenium (datos sensibles ocultos)</summary><pre className="diagnostic-technical">{item.error_message}</pre></details>}
-        {item.control_state && item.control_state !== '{}' && <details><summary>Estado del control</summary><pre className="diagnostic-technical">{item.control_state}</pre></details>}
+        {item.control_state && item.control_state !== '{}' && <details><summary>{item.stage === 'chrome_start' ? 'Recursos al fallar Chrome' : 'Estado del control'}</summary><pre className="diagnostic-technical">{item.control_state}</pre></details>}
         {item.control_structure && <details><summary>HTML estructural depurado</summary><pre className="diagnostic-technical">{item.control_structure}</pre></details>}
         <small>ID: {item.id}</small>
         {item.has_screenshot ? <button className="button secondary" onClick={() => showScreenshot(item)}>Ver captura</button> : <span className="subtle">Sin captura por privacidad o navegador no disponible</span>}

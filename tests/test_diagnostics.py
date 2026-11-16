@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from selenium.common.exceptions import TimeoutException, WebDriverException, ElementNotInteractableException
+from selenium.common.exceptions import TimeoutException, WebDriverException, ElementNotInteractableException, SessionNotCreatedException
 
 from webapp.api import make_app
 from webapp.db import Database, now
@@ -132,6 +132,22 @@ def test_pending_comment_pause_keeps_private_screenshot_only_on_post(tmp_path, m
     login = Browser('https://www.instagram.com/accounts/login/?token=private')
     store.record(task, account, 'session_check', PendingCommentError('Sesion requerida'), login)
     assert login.screenshots == 0
+
+
+def test_chrome_start_failure_reports_resource_snapshot_without_screenshot(tmp_path, monkeypatch):
+    monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
+    db, task, _, account = seeded_database(tmp_path)
+    error = SessionNotCreatedException('chrome not reachable at 127.0.0.1:60161')
+    error.bot_operation = 'crear_driver'
+    error.bot_control_state = {'mem_available_mb': 900, 'tmp_free_mb': 14000,
+                               'cgroup_oom_kills': 2, 'profile_chrome_running': False,
+                               'secret': 'must not be stored'}
+    DiagnosticStore(db).record(task, account, 'chrome_start', error)
+    item = DiagnosticStore(db).for_task(task)[0]
+    assert item['category'] == 'browser_start_failed'
+    assert item['has_screenshot'] == 0
+    assert 'mem_available_mb' in item['control_state']
+    assert 'secret' not in str(item)
 
 
 def test_login_modal_on_post_url_skips_capture(tmp_path, monkeypatch):

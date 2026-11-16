@@ -92,6 +92,8 @@ def _probe(driver, selector):
 
 def _category(info, stage, exc, operation):
     url = info['page_url'].lower()
+    if stage == 'chrome_start':
+        return 'browser_start_failed', 'Chrome no completo el arranque; revisar memoria, limites del servicio y procesos del perfil.'
     if not info['browser_responding']:
         return 'browser_unresponsive', 'Chrome no responde a los comandos de Selenium.'
     if info['login_fields'] or '/accounts/login' in url:
@@ -178,7 +180,10 @@ class DiagnosticStore:
         error_message = safe_exception_message(exc) if isinstance(exc, WebDriverException) else ''
         control_state = getattr(exc, 'bot_control_state', {}) or {}
         allowed = ('editor_matches', 'button_matches', 'visible', 'enabled',
-                   'stale_references', 'ambiguous', 'scope')
+                   'stale_references', 'ambiguous', 'scope',
+                   'mem_available_mb', 'swap_free_mb', 'tmp_free_mb', 'shm_free_mb',
+                   'cgroup_memory_mb', 'cgroup_limit_mb', 'cgroup_oom_kills',
+                   'cgroup_pids', 'cgroup_pids_limit', 'profile_chrome_running')
         control_state = json.dumps({key: control_state[key] for key in allowed if key in control_state})
         control_structure = str(getattr(exc, 'bot_control_structure', '') or '')[:600]
         screenshot_file = None
