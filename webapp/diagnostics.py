@@ -92,6 +92,8 @@ def _probe(driver, selector):
 
 def _category(info, stage, exc, operation):
     url = info['page_url'].lower()
+    if type(exc).__name__ == 'ProfilePreferencesTooLarge':
+        return 'profile_preferences_oversized', 'El archivo Preferences del perfil es demasiado grande para iniciar Chrome sin agotar la memoria.'
     if stage == 'chrome_start':
         return 'browser_start_failed', 'Chrome no completo el arranque; revisar memoria, limites del servicio y procesos del perfil.'
     if not info['browser_responding']:
@@ -177,7 +179,8 @@ class DiagnosticStore:
         condition = str(getattr(exc, 'bot_condition', '') or '')[:240]
         category, summary = _category(info, stage, exc, operation)
         error_type = type(exc).__name__[:80]
-        error_message = safe_exception_message(exc) if isinstance(exc, WebDriverException) else ''
+        error_message = (safe_exception_message(exc) if isinstance(exc, WebDriverException)
+                         else str(getattr(exc, 'bot_safe_message', ''))[:600])
         control_state = getattr(exc, 'bot_control_state', {}) or {}
         allowed = ('editor_matches', 'button_matches', 'visible', 'enabled',
                    'stale_references', 'ambiguous', 'scope',

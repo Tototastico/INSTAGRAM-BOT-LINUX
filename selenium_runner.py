@@ -18,6 +18,25 @@ from pathlib import Path
 
 COMMENT_TEXTAREA_SELECTOR = COMMENT_CANDIDATE_SELECTOR
 _chrome_start_lock = threading.Lock()
+PREFERENCES_MAX_MB = 64
+
+
+class ProfilePreferencesTooLarge(RuntimeError):
+    """Stop before undetected-chromedriver loads an oversized profile JSON."""
+
+
+def _check_preferences_size(profile):
+    preferences = Path(profile) / 'Default' / 'Preferences'
+    try:
+        size = preferences.stat().st_size
+    except FileNotFoundError:
+        return
+    if size > PREFERENCES_MAX_MB * 1024 * 1024:
+        error = ProfilePreferencesTooLarge(
+            f'Preferences del perfil ocupa {size // (1024 * 1024)} MB; '
+            f'limite preventivo {PREFERENCES_MAX_MB} MB. No se abrio Chrome ni se modifico el perfil.')
+        error.bot_safe_message = str(error)
+        raise error
 
 
 def _operation_error(exc, operation, condition=''):
@@ -52,6 +71,7 @@ def crear_driver(nombre_cuenta):
     # uc.Chrome patches a shared driver binary before launching Chrome.
     # Keep concurrent accounts from modifying it during another startup.
     with _chrome_start_lock:
+        _check_preferences_size(perfil_path)
         try:
             driver = uc.Chrome(options=options, browser_executable_path=chrome_executable,
                                version_main=chrome_major, use_subprocess=False)
@@ -116,7 +136,8 @@ def acceder_caja(url_post, nombre_cuenta, on_log=None, on_stage=None, on_diagnos
         _operation_error(e, operation, condition)
         if on_diagnostic:
             on_diagnostic(stage, e, driver, COMMENT_TEXTAREA_SELECTOR if stage == 'comment_box_lookup' else '')
-        report(f"[!] Error al abrir la caja de comentarios durante {stage}, operacion {operation}: {type(e).__name__}",
+        detail = f': {e}' if isinstance(e, ProfilePreferencesTooLarge) else ''
+        report(f"[!] Error al abrir la caja de comentarios durante {stage}, operacion {operation}: {type(e).__name__}{detail}",
                on_log, 'selenium_error')
         return False, driver, None
 

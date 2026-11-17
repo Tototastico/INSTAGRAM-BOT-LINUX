@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 
+import pytest
 from selenium.common.exceptions import SessionNotCreatedException
 
 import selenium_runner
@@ -77,3 +78,21 @@ def test_failed_start_attaches_resource_evidence_without_retry(tmp_path, monkeyp
     except SessionNotCreatedException as exc:
         assert exc.bot_control_state == {'mem_available_mb': 900, 'profile_chrome_running': False}
     assert len(attempts) == 1
+
+
+def test_oversized_preferences_stop_before_chrome_without_reading_profile(tmp_path, monkeypatch):
+    profiles = tmp_path / 'profiles'
+    preferences = profiles / 'cuenta1' / 'Default' / 'Preferences'
+    preferences.parent.mkdir(parents=True)
+    with preferences.open('wb') as stream:
+        stream.seek((selenium_runner.PREFERENCES_MAX_MB + 1) * 1024 * 1024 - 1)
+        stream.write(b'x')
+    monkeypatch.setenv('BOT_ACCOUNTS_DIR', str(profiles))
+    monkeypatch.setenv('HEADLESS', 'true')
+    monkeypatch.setattr(selenium_runner, 'chrome_binary_and_major', lambda: ('/fake/chrome', 157))
+    monkeypatch.setattr(selenium_runner.uc, 'Chrome',
+                        lambda **kwargs: pytest.fail('Chrome must not start with oversized Preferences'))
+    with pytest.raises(selenium_runner.ProfilePreferencesTooLarge, match='limite preventivo') as caught:
+        selenium_runner.crear_driver('cuenta1')
+    assert preferences.stat().st_size == 65 * 1024 * 1024
+    assert str(profiles) not in str(caught.value)

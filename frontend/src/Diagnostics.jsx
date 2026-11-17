@@ -17,6 +17,7 @@ const categoryLabels = {
   element_lookup: 'Búsqueda de elemento', visibility: 'Visibilidad del elemento',
   browser_state: 'Estado del navegador', interaction: 'Interacción',
   browser_start_failed: 'Chrome no inició',
+  profile_preferences_oversized: 'Preferencias del perfil demasiado grandes',
   stale_reference: 'Referencia obsoleta', editor_changed: 'Editor reemplazado',
   ambiguous_control: 'Control ambiguo', not_visible: 'Control no visible',
   pending_comment: 'Comentario pendiente',

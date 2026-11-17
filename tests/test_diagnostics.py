@@ -150,6 +150,20 @@ def test_chrome_start_failure_reports_resource_snapshot_without_screenshot(tmp_p
     assert 'secret' not in str(item)
 
 
+def test_oversized_preferences_have_specific_private_diagnostic(tmp_path, monkeypatch):
+    from selenium_runner import ProfilePreferencesTooLarge
+
+    monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
+    db, task, _, account = seeded_database(tmp_path)
+    error = ProfilePreferencesTooLarge('Preferences del perfil ocupa 3072 MB; limite preventivo 64 MB.')
+    error.bot_safe_message = str(error)
+    DiagnosticStore(db).record(task, account, 'chrome_start', error)
+    item = DiagnosticStore(db).for_task(task)[0]
+    assert item['category'] == 'profile_preferences_oversized'
+    assert item['has_screenshot'] == 0
+    assert '3072 MB' in item['error_message']
+
+
 def test_login_modal_on_post_url_skips_capture(tmp_path, monkeypatch):
     monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
     db, task, _, account = seeded_database(tmp_path)
