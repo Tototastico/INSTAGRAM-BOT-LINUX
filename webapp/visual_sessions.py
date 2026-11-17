@@ -16,6 +16,7 @@ except ImportError:  # Linux-only feature; keep the Windows test/import path usa
     fcntl = None
 
 from .db import now, row, profile_path
+from .profile_health import ProfilePreferencesTooLarge, check_preferences_size
 from .settings import accounts_dir, data_dir, ensure_private_dir
 from .session_probe import probe
 
@@ -174,6 +175,10 @@ class VisualSessions:
             try:
                 display = self._display()
                 ensure_private_dir(profile)
+                try:
+                    check_preferences_size(profile)
+                except ProfilePreferencesTooLarge as exc:
+                    raise VisualSessionError(str(exc)) from exc
                 ensure_private_dir(self.runtime)
                 authority = self.runtime / f'auth-{account_id}-{secrets.token_hex(8)}'
                 authority.touch(mode=0o600)
@@ -309,6 +314,7 @@ class VisualSessions:
                 state = 'not_signed_in'
                 reason = 'El perfil Chrome aun no existe'
             else:
+                check_preferences_size(profile)
                 options = webdriver.ChromeOptions()
                 options.binary_location = os.environ.get('CHROME_BINARY', '/usr/bin/google-chrome-stable')
                 options.add_argument(f'--user-data-dir={profile}')
@@ -323,6 +329,9 @@ class VisualSessions:
                     if state != 'unknown' or self.clock() >= deadline:
                         break
                     time.sleep(0.5)
+            return state
+        except ProfilePreferencesTooLarge as exc:
+            reason = str(exc)
             return state
         except Exception as exc:
             reason = f'Verificacion fallida: {type(exc).__name__}'

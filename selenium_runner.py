@@ -12,31 +12,14 @@ from webapp.comment_field import (COMMENT_CANDIDATE_SELECTOR, confirm_comment_fi
 from webapp.publish_button import (PUBLISH_CONTROL_SELECTOR, PublishButtonProbe,
                                    safe_button_state)
 from webapp.db import profile_path
+from webapp.profile_health import (PREFERENCES_MAX_MB, ProfilePreferencesTooLarge,
+                                   check_preferences_size as _check_preferences_size)
 from webapp.settings import ensure_private_dir, headless, validate_visual_environment
 from webapp.startup_health import startup_snapshot
 from pathlib import Path
 
 COMMENT_TEXTAREA_SELECTOR = COMMENT_CANDIDATE_SELECTOR
 _chrome_start_lock = threading.Lock()
-PREFERENCES_MAX_MB = 64
-
-
-class ProfilePreferencesTooLarge(RuntimeError):
-    """Stop before undetected-chromedriver loads an oversized profile JSON."""
-
-
-def _check_preferences_size(profile):
-    preferences = Path(profile) / 'Default' / 'Preferences'
-    try:
-        size = preferences.stat().st_size
-    except FileNotFoundError:
-        return
-    if size > PREFERENCES_MAX_MB * 1024 * 1024:
-        error = ProfilePreferencesTooLarge(
-            f'Preferences del perfil ocupa {size // (1024 * 1024)} MB; '
-            f'limite preventivo {PREFERENCES_MAX_MB} MB. No se abrio Chrome ni se modifico el perfil.')
-        error.bot_safe_message = str(error)
-        raise error
 
 
 def _operation_error(exc, operation, condition=''):

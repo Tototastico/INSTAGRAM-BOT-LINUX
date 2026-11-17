@@ -7,6 +7,7 @@ from .db import now, row, rows
 from .diagnostics import DiagnosticStore
 from .runner import PendingCommentError, SeleniumRunner, SessionUnavailableError, compose_comment
 from .resources import admission_decision, can_start, snapshot
+from .profile_health import preference_warning
 from .settings import max_browsers
 
 
@@ -139,6 +140,12 @@ class Coordinator:
             limit = self.browser_limit(con)
             active = set(self.active_profiles)
             admission = admission_decision(metrics, len(active))
+            profile_warnings = []
+            for account in rows(con, 'SELECT id,name,profile_path FROM accounts WHERE archived=0'):
+                warning = preference_warning(account['profile_path'])
+                if warning:
+                    profile_warnings.append({'account_id': account['id'], 'account_name': account['name'],
+                                             **warning})
             queued = rows(con, "SELECT t.id,a.profile_path FROM tasks t JOIN accounts a ON a.id=t.account_id WHERE t.status='queued' ORDER BY t.id")
             reasons = {}
             for task in queued:
@@ -153,7 +160,8 @@ class Coordinator:
             return {'active_browsers': len(active), 'running_tasks': sum(isinstance(v, int) for v in self.active_profiles.values()),
                     'queued_tasks': len(queued), 'limit': limit, 'memory_available_mb': metrics['available_mb'],
                       'chrome_memory_mb': metrics.get('chrome_mb'), 'cpu_load': metrics.get('cpu_load'),
-                      'admission': admission, 'reasons': reasons}
+                      'admission': admission, 'reasons': reasons,
+                      'profile_warnings': profile_warnings}
 
     def _load_task(self, task_id):
         with self.db.connect() as con:

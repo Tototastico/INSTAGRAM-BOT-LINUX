@@ -9,6 +9,22 @@ from webapp.resources import can_start
 from webapp.session_probe import probe
 
 
+def test_scheduler_warns_about_growing_preferences_without_exposing_profile(tmp_path):
+    db = Database(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
+    profile = tmp_path / 'accounts' / 'one'
+    preferences = profile / 'Default' / 'Preferences'
+    preferences.parent.mkdir(parents=True)
+    with preferences.open('wb') as stream:
+        stream.truncate(12 * 1024 * 1024)
+    with db.connect() as con:
+        account_id = con.execute('INSERT INTO accounts(name,profile_arg,profile_path) VALUES(?,?,?)',
+                                 ('Cuenta de prueba', 'one', str(profile))).lastrowid
+    warning = Coordinator(db).scheduler_status()['profile_warnings']
+    assert warning == [{'account_id': account_id, 'account_name': 'Cuenta de prueba',
+                        'state': 'growing', 'size_mb': 12.0}]
+    assert str(profile) not in str(warning)
+
+
 class Element:
     def __init__(self, tag='a', **attributes):
         self.tag_name, self.attributes = tag, attributes

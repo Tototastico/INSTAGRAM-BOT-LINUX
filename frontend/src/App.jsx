@@ -399,9 +399,15 @@ function PageHeading({ title, subtitle, action, onAction }) {
 function SchedulerSummary({ scheduler, settings, perform }) {
   const admission = scheduler.admission || {}
   const mb = value => value == null ? 'No disponible' : `${value} MB`
+  const profileWarnings = scheduler.profile_warnings || []
   const source = { pss: 'PSS', rss_fallback: 'RSS (PSS inaccesible en un proceso activo)', rss_transient: 'RSS (procesos transitorios)', none: 'Sin Chrome activo', unknown: 'No disponible' }[admission.memory_source] || 'No disponible'
   return <div className="scheduler-summary">
     <strong>Navegadores activos: {scheduler.active_browsers ?? 0}/{scheduler.limit ?? 1}</strong>
+    {profileWarnings.map(warning => <span className="scheduler-reason" key={warning.account_id}>
+      {warning.state === 'blocked' ? 'Perfil bloqueado' : warning.state === 'growing' ? 'Preferencias en crecimiento' : 'Preferencias sin medir'}:
+      {' '}{warning.account_name} ({mb(warning.size_mb)}).
+      {warning.state === 'blocked' ? ' Revisar antes de iniciar Chrome.' : ' Revisar antes de ampliar la concurrencia.'}
+    </span>)}
     <span>Tareas en ejecución: {scheduler.running_tasks ?? 0}</span>
     <span>En cola: {scheduler.queued_tasks ?? 0}</span>
     <span>RAM disponible: {mb(admission.available_mb)}</span>

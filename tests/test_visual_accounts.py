@@ -117,6 +117,28 @@ def test_verification_reads_state_and_releases_profile(visual_client, monkeypatc
     assert client.get('/api/accounts').json()[0]['session_status'] == 'connected'
 
 
+def test_oversized_preferences_block_visual_and_verification_before_chrome(visual_client, monkeypatch):
+    client, app, _ = visual_client
+    account = client.post('/api/accounts', json={'name': 'Cuenta 2', 'profile_arg': 'cuenta2'}).json()
+    profile = Path(account['profile_path'])
+    preferences = profile / 'Default' / 'Preferences'
+    preferences.parent.mkdir(parents=True, exist_ok=True)
+    with preferences.open('wb') as stream:
+        stream.truncate(65 * 1024 * 1024)
+    import webapp.visual_sessions as module
+    if module.fcntl is None:
+        monkeypatch.setattr(module, 'fcntl', types.SimpleNamespace(
+            LOCK_EX=1, LOCK_NB=2, flock=lambda *_: None))
+    app.state.visual.platform = 'posix'
+    monkeypatch.setattr(app.state.visual, '_display', lambda: ':120')
+    monkeypatch.setattr(app.state.visual, '_spawn', lambda *_args, **_kwargs: pytest.fail('Chrome must not launch'))
+    with pytest.raises(VisualSessionError, match='limite preventivo'):
+        app.state.visual.open(account['id'])
+    assert not app.state.coordinator.active_profiles
+    assert app.state.visual.verify(account['id'], driver_factory=lambda **_: pytest.fail('Chrome must not launch')) == 'verification_error'
+    assert preferences.stat().st_size == 65 * 1024 * 1024
+
+
 def test_password_hash_and_session_expiration(monkeypatch):
     monkeypatch.setenv('BOT_PUBLIC_ORIGIN', 'https://bot.example.test')
     monkeypatch.setenv('BOT_VISUAL_ADMIN_PASSWORD_HASH', password_hash('secret'))
