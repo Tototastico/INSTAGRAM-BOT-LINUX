@@ -1,8 +1,20 @@
 INICIAR SESION DE INSTAGRAM EN UN PERFIL DEL BOT LINUX CON REALVNC
 
 Ejemplo: cuenta2. Cambia CUENTA si vas a cargar otra cuenta. Estos comandos usan
-el VPS Ubuntu, el usuario jarvisadmin, Chrome en DISPLAY=:99 y el VNC privado
-existente en 127.0.0.1:5901. No usan perfiles del proyecto Windows.
+el VPS Ubuntu, el usuario jarvisadmin, Chrome en DISPLAY=:99 y VNC privado
+en 127.0.0.1:5901. No usan perfiles del proyecto Windows.
+
+Antes de abrir RealVNC, comprueba en el VPS si VNC esta escuchando:
+
+   sudo ss -ltnp | grep ':5901' || echo 'VNC no esta activo'
+
+Si no esta activo, abre otra terminal SSH del VPS y ejecuta como jarvisadmin:
+
+   x11vnc -display :99 -auth /home/jarvisadmin/.instagram-xauth -localhost -rfbport 5901 -usepw -once
+
+Si solicita crear una clave VNC, elige una nueva sin escribirla en este
+archivo. Deja esa terminal abierta. Al desconectar el visor, -once detiene
+este VNC temporal. No abras el puerto 5901 al exterior.
 
 1) En Windows PowerShell, abre el tunel SSH y deja esa ventana abierta:
 
@@ -16,7 +28,7 @@ existente en 127.0.0.1:5901. No usan perfiles del proyecto Windows.
 
    CUENTA=cuenta2
    PERFIL="/home/jarvisadmin/instagram-bot-data/accounts/$CUENTA"
-   XAUTHORITY_PATH=/home/jarvisadmin/.Xauthority
+   XAUTHORITY_PATH=/home/jarvisadmin/.instagram-xauth
    sudo systemctl stop instagram-bot
    sudo ss -ltnp | grep ':5901'
    sudo -u jarvisadmin test -r "$XAUTHORITY_PATH" && echo 'XAUTHORITY legible'
