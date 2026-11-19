@@ -31,10 +31,15 @@ def parse_comment_count(value):
 
 
 def compose_comment(tags, tag_count, extra_text):
+    extra = ''.join(char for char in (extra_text or '').strip() if ord(char) <= 0xFFFF)
+    if tag_count == 0:
+        if not extra.strip():
+            raise ValueError('El sorteo sin menciones necesita texto adicional')
+        return extra
     if not tags:
         raise ValueError('La asignacion necesita al menos una etiqueta')
     generated = generar_comentario(tags, tag_count)
-    text = f'{generated} {extra_text.strip()}'.strip()
+    text = f'{generated} {extra}'.strip()
     return ''.join(char for char in text if ord(char) <= 0xFFFF)
 
 

@@ -77,7 +77,7 @@ class AssignmentIn(BaseModel):
     draw_id: int
     duration_minutes: int = Field(ge=0, le=10080)
     comments_per_minute: float = Field(gt=0, le=60)
-    tags: list[str] = Field(min_length=1)
+    tags: list[str] = Field(default_factory=list)
 
     @field_validator('tags')
     @classmethod
@@ -342,6 +342,18 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
             raise HTTPException(404, 'No encontrado')
         return found
 
+    def validate_draw_comment(tag_count, extra_text):
+        if tag_count == 0 and not ''.join(
+                char for char in (extra_text or '').strip() if ord(char) <= 0xFFFF).strip():
+            raise HTTPException(422, 'Un sorteo con 0 menciones requiere Texto adicional')
+
+    def validate_assignment_comment(draw, tags):
+        if draw['tag_count'] == 0:
+            if not ''.join(char for char in draw['extra_text'].strip() if ord(char) <= 0xFFFF).strip():
+                raise HTTPException(409, 'El sorteo con 0 menciones necesita Texto adicional')
+        elif not tags:
+            raise HTTPException(409, 'Selecciona al menos una etiqueta para este sorteo')
+
     def check_inactive(con, account_id=None, draw_id=None, assignment_id=None):
         if account_id is not None and visual.info(account_id)['open']:
             raise HTTPException(409, 'Cierra el navegador visual antes de editar la cuenta')
@@ -496,6 +508,7 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
     @app.post('/api/draws', status_code=201)
     def add_draw(data: DrawIn):
         with db.connect() as con:
+            validate_draw_comment(data.tag_count, data.extra_text)
             item_id = con.execute('INSERT INTO draws(name,url,notes,extra_text,end_date,end_time,tag_count) VALUES(?,?,?,?,?,?,?)',
                                   (data.name.strip(), data.url, data.notes, data.extra_text,
                                    data.end_date.isoformat() if data.end_date else None, data.end_time, data.tag_count)).lastrowid
@@ -506,6 +519,7 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
         with db.connect() as con:
             existing = require(con, 'draws', item_id)
             extra_text = data.extra_text if 'extra_text' in data.model_fields_set else existing['extra_text']
+            validate_draw_comment(data.tag_count, extra_text)
             if data.url != existing['url'] or data.tag_count != existing['tag_count'] or extra_text != existing['extra_text']:
                 check_inactive(con, draw_id=item_id)
             con.execute('UPDATE draws SET name=?,url=?,notes=?,extra_text=?,end_date=?,end_time=?,tag_count=? WHERE id=?',
@@ -540,6 +554,7 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
             draw = require(con, 'draws', data.draw_id)
             if account['archived'] or draw['archived']:
                 raise HTTPException(409, 'Cuenta o sorteo archivado')
+            validate_assignment_comment(draw, data.tags)
             available = {item['tag'] for item in rows(con, 'SELECT tag FROM tag_library')}
             if any(tag not in available for tag in data.tags):
                 raise HTTPException(409, 'Selecciona etiquetas de la biblioteca')
@@ -562,6 +577,7 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
             draw = require(con, 'draws', data.draw_id)
             if account['archived'] or draw['archived']:
                 raise HTTPException(409, 'Cuenta o sorteo archivado')
+            validate_assignment_comment(draw, data.tags)
             available = {item['tag'] for item in rows(con, 'SELECT tag FROM tag_library')}
             if any(tag not in available for tag in data.tags):
                 raise HTTPException(409, 'Selecciona etiquetas de la biblioteca')

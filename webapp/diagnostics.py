@@ -25,6 +25,8 @@ def safe_url(raw):
         path = parsed.path
         if re.fullmatch(r'/(p|reel)/[A-Za-z0-9_-]+/?', path):
             return f'https://{parsed.hostname}{path}'
+        if path in ('', '/'):
+            return f'https://{parsed.hostname}/'
         if path.startswith('/accounts/login'):
             return f'https://{parsed.hostname}/accounts/login/'
         if path.startswith(('/challenge', '/checkpoint')):
@@ -103,6 +105,8 @@ def _category(info, stage, exc, operation):
     if '/challenge' in url or '/checkpoint' in url:
         return 'verification', 'Instagram solicita una verificacion manual.'
     if not any(part in url for part in ('/p/', '/reel/')):
+        if url in ('https://instagram.com/', 'https://www.instagram.com/'):
+            return 'navigation', 'Instagram termino en Inicio, no en la publicacion esperada.'
         return 'navigation', 'La navegacion no termino en la publicacion esperada.'
     if info['post_unavailable']:
         return 'post_unavailable', 'Instagram indica que la publicacion no esta disponible.'

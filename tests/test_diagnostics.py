@@ -73,6 +73,18 @@ def test_failure_capture_is_private_sanitized_and_bound_to_task(tmp_path, monkey
     assert store.screenshot(other, diagnostic_id) is None
 
 
+def test_home_redirect_is_reported_without_query_or_private_path(tmp_path, monkeypatch):
+    monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
+    db, task, _, account = seeded_database(tmp_path)
+    assert safe_url('https://www.instagram.com/?token=private') == 'https://www.instagram.com/'
+    DiagnosticStore(db).record(task, account, 'comment_box_lookup', TimeoutException(),
+                               Browser('https://www.instagram.com/?token=private'))
+    item = DiagnosticStore(db).for_task(task)[0]
+    assert item['category'] == 'navigation'
+    assert 'Inicio' in item['summary']
+    assert 'private' not in str(item)
+
+
 def test_webdriver_message_and_operation_are_saved_with_secrets_redacted(tmp_path, monkeypatch):
     monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
     db, task, _, account = seeded_database(tmp_path)

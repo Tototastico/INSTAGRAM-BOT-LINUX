@@ -2,6 +2,8 @@
 
 Panel local para administrar cuentas, sorteos, asignaciones y tareas en Linux. El envio sigue usando las funciones existentes de `selenium_runner.py`. El programa no inicia tareas automaticamente al abrirse. Para instalar en Ubuntu, consulta [DESPLIEGUE_LINUX.md](DESPLIEGUE_LINUX.md).
 
+Un sorteo puede pedir **0 menciones** si tiene **Texto adicional** no vacio. En ese caso la asignacion no necesita etiquetas y el comentario se compone solo con ese texto, sin plantilla aleatoria. Con una o mas menciones sigue siendo necesario seleccionar al menos una etiqueta. Un fallo en `comment_box_lookup` ocurre antes de componer el comentario; si el diagnostico indica navegacion, revisar la URL final y la sesion de esa tarea antes de reintentar.
+
 La administracion visual de cuentas desde el panel y el acceso movil se documentan en [VISUAL_SESSIONS.md](VISUAL_SESSIONS.md). La concurrencia y comprobacion de sesiones se documentan en [PARALLEL_SESSIONS.md](PARALLEL_SESSIONS.md). Requieren HTTPS valido y configuracion de acceso administrativo antes de habilitar el visor remoto.
 
 ## Instalacion
