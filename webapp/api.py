@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import sqlite3
 from contextlib import asynccontextmanager, suppress
 from datetime import date
@@ -60,7 +61,9 @@ class DrawIn(BaseModel):
     @classmethod
     def valid_url(cls, value):
         parsed = urlparse(value)
-        if parsed.scheme != 'https' or parsed.hostname not in ('instagram.com', 'www.instagram.com') or not parsed.path.startswith(('/p/', '/reel/')):
+        if (parsed.scheme != 'https' or parsed.hostname not in ('instagram.com', 'www.instagram.com')
+                or parsed.username or parsed.password or parsed.port
+                or not re.fullmatch(r'/(p|reel)/[A-Za-z0-9_-]+/?', parsed.path)):
             raise ValueError('Usa una URL HTTPS de publicacion o reel de Instagram')
         return value
 

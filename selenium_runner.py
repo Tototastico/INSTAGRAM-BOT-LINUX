@@ -117,6 +117,9 @@ def acceder_caja(url_post, nombre_cuenta, on_log=None, on_stage=None, on_diagnos
 
     except Exception as e:
         _operation_error(e, operation, condition)
+        # Keep the requested destination for a redirect diagnosis. The store
+        # removes query parameters and fragments before persisting it.
+        e.bot_requested_url = url_post
         if on_diagnostic:
             on_diagnostic(stage, e, driver, COMMENT_TEXTAREA_SELECTOR if stage == 'comment_box_lookup' else '')
         detail = f': {e}' if isinstance(e, ProfilePreferencesTooLarge) else ''

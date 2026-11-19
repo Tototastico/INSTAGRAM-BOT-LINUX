@@ -77,11 +77,15 @@ def test_home_redirect_is_reported_without_query_or_private_path(tmp_path, monke
     monkeypatch.setenv('BOT_DEBUG_DIR', str(tmp_path / 'debug'))
     db, task, _, account = seeded_database(tmp_path)
     assert safe_url('https://www.instagram.com/?token=private') == 'https://www.instagram.com/'
-    DiagnosticStore(db).record(task, account, 'comment_box_lookup', TimeoutException(),
-                               Browser('https://www.instagram.com/?token=private'))
+    error = TimeoutException()
+    error.bot_requested_url = 'https://www.instagram.com/reel/ABC/?token=private#fragment'
+    browser = Browser('https://www.instagram.com/?token=private')
+    DiagnosticStore(db).record(task, account, 'comment_box_lookup', error, browser)
     item = DiagnosticStore(db).for_task(task)[0]
     assert item['category'] == 'navigation'
     assert 'Inicio' in item['summary']
+    assert '"requested_post_url": "https://www.instagram.com/reel/ABC/"' in item['control_state']
+    assert item['has_screenshot'] == 0 and browser.screenshots == 0
     assert 'private' not in str(item)
 
 
@@ -276,6 +280,37 @@ def test_comment_box_timeout_reports_exact_stage_without_real_instagram(monkeypa
     assert failures[0][0:2] == ('comment_box_lookup', 'TimeoutException')
     assert 'textarea' in failures[0][2]
     assert 'secret' not in str(events)
+
+
+def test_failed_comment_lookup_keeps_requested_post_for_diagnostics(monkeypatch):
+    import selenium_runner
+
+    class Driver:
+        current_url = 'https://www.instagram.com/'
+
+        def get(self, url):
+            pass
+
+        def execute_script(self, script):
+            return 'complete'
+
+    class Wait:
+        def __init__(self, driver, seconds):
+            pass
+
+        def until(self, condition):
+            if getattr(condition, '__name__', '') == 'ready_comment_field':
+                raise TimeoutException()
+            return True
+
+    monkeypatch.setattr(selenium_runner, 'crear_driver', lambda profile: Driver())
+    monkeypatch.setattr(selenium_runner, 'WebDriverWait', Wait)
+    failures = []
+    success, _, _ = selenium_runner.acceder_caja(
+        'https://www.instagram.com/p/ABC/?token=private', 'cuenta1',
+        on_diagnostic=lambda stage, exc, driver, selector: failures.append(exc))
+    assert not success
+    assert failures[0].bot_requested_url == 'https://www.instagram.com/p/ABC/?token=private'
 
 
 def test_page_ready_failure_records_exact_operation_and_condition(monkeypatch):

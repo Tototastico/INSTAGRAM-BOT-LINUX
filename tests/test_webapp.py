@@ -264,6 +264,12 @@ def test_crud_and_archive(tmp_path):
         account_id = account.json()['id']
         draw = client.post('/api/draws', json={'name': 'Sorteo A', 'url': 'https://www.instagram.com/p/ABC/'})
         assert draw.status_code == 201
+        assert client.post('/api/draws', json={
+            'name': 'Enlace incompleto', 'url': 'https://www.instagram.com/p/'
+        }).status_code == 422
+        assert client.post('/api/draws', json={
+            'name': 'Ruta extra', 'url': 'https://www.instagram.com/p/ABC/otro'
+        }).status_code == 422
         draw_id = draw.json()['id']
         assert client.post('/api/tags', json={'tags': ['@amigo']}).status_code == 201
         payload = {'account_id': account_id, 'draw_id': draw_id, 'duration_minutes': 5,

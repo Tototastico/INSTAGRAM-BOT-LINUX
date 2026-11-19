@@ -186,8 +186,12 @@ class DiagnosticStore:
         error_message = (safe_exception_message(exc) if isinstance(exc, WebDriverException)
                          else str(getattr(exc, 'bot_safe_message', ''))[:600])
         control_state = getattr(exc, 'bot_control_state', {}) or {}
+        requested_url = getattr(exc, 'bot_requested_url', None)
+        if requested_url:
+            control_state = {**control_state, 'requested_post_url': safe_url(requested_url)}
         allowed = ('editor_matches', 'button_matches', 'visible', 'enabled',
                    'stale_references', 'ambiguous', 'scope',
+                   'requested_post_url',
                    'mem_available_mb', 'swap_free_mb', 'tmp_free_mb', 'shm_free_mb',
                    'cgroup_memory_mb', 'cgroup_limit_mb', 'cgroup_oom_kills',
                    'cgroup_pids', 'cgroup_pids_limit', 'profile_chrome_running')

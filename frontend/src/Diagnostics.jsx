@@ -23,6 +23,10 @@ const categoryLabels = {
   pending_comment: 'Comentario pendiente',
 }
 const dateTime = value => value ? new Date(value).toLocaleString('es-AR') : 'Sin registrar'
+const requestedPostUrl = item => {
+  try { return JSON.parse(item.control_state || '{}').requested_post_url || '' }
+  catch { return '' }
+}
 
 export default function Diagnostics({ task, openInitially = false }) {
   const [password, setPassword] = useState('')
@@ -109,6 +113,8 @@ export default function Diagnostics({ task, openInitially = false }) {
       <div className="diagnostics-list">{data.items.map(item => <article className="diagnostic-card" key={item.id}>
         <div className="diagnostic-card-head"><strong>{categoryLabels[item.category] || item.category}</strong><time>{dateTime(item.created_at)}</time></div>
         <p>{item.summary}</p>
+        {requestedPostUrl(item) && <p className="subtle">Publicación solicitada: {requestedPostUrl(item)}</p>}
+        {item.category === 'navigation' && <p className="subtle">La captura se omite porque Inicio puede mostrar contenido privado. Revisá el enlace del sorteo y abrilo manualmente con esa cuenta.</p>}
         <dl><div><dt>Etapa</dt><dd>{stageLabels[item.stage] || item.stage}</dd></div><div><dt>Operación</dt><dd>{item.operation || 'No registrada'}</dd></div><div><dt>Condición</dt><dd>{item.condition || 'No registrada'}</dd></div><div><dt>Error</dt><dd>{item.error_type}</dd></div><div><dt>Selector</dt><dd>{item.selector || 'No aplica'}</dd></div><div><dt>URL</dt><dd>{item.page_url || 'No disponible'}</dd></div><div><dt>Título</dt><dd>{item.page_title || 'No disponible'}</dd></div><div><dt>Documento</dt><dd>{item.ready_state}</dd></div><div><dt>Navegador</dt><dd>{item.browser_responding ? 'Responde' : 'No responde'}</dd></div><div><dt>Elementos / visibles</dt><dd>{item.matching_elements ?? '?'} / {item.visible_elements ?? '?'}</dd></div><div><dt>Diálogos</dt><dd>{item.dialog_count ?? '?'}</dd></div></dl>
         {item.error_message && <details><summary>Mensaje técnico de Selenium (datos sensibles ocultos)</summary><pre className="diagnostic-technical">{item.error_message}</pre></details>}
         {item.control_state && item.control_state !== '{}' && <details><summary>{item.stage === 'chrome_start' ? 'Recursos al fallar Chrome' : 'Estado del control'}</summary><pre className="diagnostic-technical">{item.control_state}</pre></details>}
