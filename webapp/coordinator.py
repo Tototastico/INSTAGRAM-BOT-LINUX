@@ -7,7 +7,7 @@ from .db import now, row, rows
 from .diagnostics import DiagnosticStore
 from .runner import PendingCommentError, SeleniumRunner, SessionUnavailableError, compose_comment
 from .resources import admission_decision, can_start, snapshot
-from .profile_health import preference_warning
+from .profile_health import PreferencesMonitor, preference_warning
 from .settings import max_browsers
 
 
@@ -25,6 +25,7 @@ class Coordinator:
         self.threads = {}
         self.stopping = False
         self.diagnostics = DiagnosticStore(db)
+        self.preferences_monitor = PreferencesMonitor()
 
     def _event(self, con, task_id, kind, message):
         con.execute('INSERT INTO events(task_id,kind,message,created_at) VALUES(?,?,?,?)',
@@ -134,6 +135,11 @@ class Coordinator:
         configured = value['value'] if value else str(max_browsers())
         return 4 if configured == 'auto' else int(configured)
 
+    def scan_profile_preferences(self):
+        with self.db.connect() as con:
+            profiles = rows(con, 'SELECT profile_path FROM accounts')
+        self.preferences_monitor.scan([profile['profile_path'] for profile in profiles])
+
     def scheduler_status(self):
         with self.lock, self.db.connect() as con:
             metrics = snapshot(self.active_profiles)
@@ -141,7 +147,11 @@ class Coordinator:
             active = set(self.active_profiles)
             admission = admission_decision(metrics, len(active))
             profile_warnings = []
+            profile_health = []
             for account in rows(con, 'SELECT id,name,profile_path FROM accounts WHERE archived=0'):
+                monitored = self.preferences_monitor.status(account['profile_path'])
+                if monitored:
+                    profile_health.append({'account_id': account['id'], **monitored})
                 warning = preference_warning(account['profile_path'])
                 if warning:
                     profile_warnings.append({'account_id': account['id'], 'account_name': account['name'],
@@ -161,7 +171,7 @@ class Coordinator:
                     'queued_tasks': len(queued), 'limit': limit, 'memory_available_mb': metrics['available_mb'],
                       'chrome_memory_mb': metrics.get('chrome_mb'), 'cpu_load': metrics.get('cpu_load'),
                       'admission': admission, 'reasons': reasons,
-                      'profile_warnings': profile_warnings}
+                      'profile_warnings': profile_warnings, 'profile_health': profile_health}
 
     def _load_task(self, task_id):
         with self.db.connect() as con:

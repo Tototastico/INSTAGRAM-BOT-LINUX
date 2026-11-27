@@ -118,3 +118,53 @@ def test_preferences_warning_uses_only_file_size_and_never_changes_profile(tmp_p
     assert 'private-account' not in str(caught.value)
     assert 'token' not in str(caught.value)
     assert preferences.stat().st_size == 65 * 1024 * 1024
+
+
+def test_monitor_reports_known_preference_anomaly_without_writing(tmp_path, caplog):
+    import json
+    from webapp.profile_health import KNOWN_FIELDS, MIB, PreferencesMonitor
+
+    path = tmp_path / 'Default' / 'Preferences'
+    path.parent.mkdir()
+    field = KNOWN_FIELDS[1]
+    document = {}
+    current = document
+    for key in field[:-1]:
+        current[key] = {}
+        current = current[key]
+    current[field[-1]] = 'x' * (8 * MIB)
+    document['private_example'] = 'SECRET_VALUE'
+    path.write_text(json.dumps(document))
+    before = path.stat()
+    monitor = PreferencesMonitor()
+    monitor.scan([tmp_path])
+    summary = monitor.status(tmp_path)
+    assert summary['state'] == 'growing'
+    assert summary['known_large_fields'] == [{
+        'path': '.'.join(field), 'serialized_ascii_bytes': 8 * MIB + 2}]
+    assert 'SECRET_VALUE' not in caplog.text
+    assert 'SECRET_VALUE' not in str(summary)
+    assert path.stat().st_mtime_ns == before.st_mtime_ns
+    monitor.scan([tmp_path])
+    assert len(caplog.records) == 1
+    path.write_text('{}')
+    monitor.scan([tmp_path])
+    assert monitor.status(tmp_path) == {'state': 'normal', 'size_bytes': 2}
+
+
+def test_monitor_handles_missing_invalid_and_huge_preferences(tmp_path):
+    from webapp.profile_health import MIB, PreferencesMonitor
+
+    path = tmp_path / 'Default' / 'Preferences'
+    path.parent.mkdir()
+    monitor = PreferencesMonitor()
+    monitor.scan([tmp_path])
+    assert monitor.status(tmp_path)['state'] == 'missing'
+    path.write_bytes(b'!' * MIB)
+    monitor.scan([tmp_path])
+    assert monitor.status(tmp_path)['diagnostic'] == 'invalid_json'
+    with path.open('wb') as stream:
+        stream.truncate(81 * MIB)
+    monitor.scan([tmp_path])
+    assert monitor.status(tmp_path)['state'] == 'blocked'
+    assert monitor.status(tmp_path)['diagnostic'] == 'outside_budget'

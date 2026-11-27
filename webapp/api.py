@@ -155,7 +155,13 @@ def make_app(db_path=None, legacy_config=None, runner_factory=None, visual_facto
                 await asyncio.to_thread(visual.prune)
                 await asyncio.to_thread(coordinator.dispatch)
 
-        cleanup = [asyncio.create_task(prune_diagnostics()), asyncio.create_task(prune_visual())]
+        async def monitor_preferences():
+            while True:
+                await asyncio.to_thread(coordinator.scan_profile_preferences)
+                await asyncio.sleep(300)
+
+        cleanup = [asyncio.create_task(prune_diagnostics()), asyncio.create_task(prune_visual()),
+                   asyncio.create_task(monitor_preferences())]
         try:
             yield
         finally:
