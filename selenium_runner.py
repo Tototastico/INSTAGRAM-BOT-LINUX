@@ -14,6 +14,7 @@ from webapp.publish_button import (PUBLISH_CONTROL_SELECTOR, PublishButtonProbe,
 from webapp.db import profile_path
 from webapp.profile_health import (PREFERENCES_MAX_MB, ProfilePreferencesTooLarge,
                                    check_preferences_size as _check_preferences_size)
+from webapp.post_url import normalize_post_url
 from webapp.settings import ensure_private_dir, headless, validate_visual_environment
 from webapp.startup_health import startup_snapshot
 from pathlib import Path
@@ -72,6 +73,7 @@ def acceder_caja(url_post, nombre_cuenta, on_log=None, on_stage=None, on_diagnos
     stage = 'chrome_start'
     operation = 'crear_driver'
     condition = ''
+    navigation_url = normalize_post_url(url_post)
     try:
         if on_stage:
             on_stage(stage)
@@ -80,7 +82,7 @@ def acceder_caja(url_post, nombre_cuenta, on_log=None, on_stage=None, on_diagnos
         operation = 'driver.get'
         if on_stage:
             on_stage(stage)
-        driver.get(url_post)
+        driver.get(navigation_url)
         stage = 'page_ready'
         operation = 'document.readyState'
         condition = 'document.readyState == complete'
@@ -119,7 +121,7 @@ def acceder_caja(url_post, nombre_cuenta, on_log=None, on_stage=None, on_diagnos
         _operation_error(e, operation, condition)
         # Keep the requested destination for a redirect diagnosis. The store
         # removes query parameters and fragments before persisting it.
-        e.bot_requested_url = url_post
+        e.bot_requested_url = navigation_url
         if on_diagnostic:
             on_diagnostic(stage, e, driver, COMMENT_TEXTAREA_SELECTOR if stage == 'comment_box_lookup' else '')
         detail = f': {e}' if isinstance(e, ProfilePreferencesTooLarge) else ''

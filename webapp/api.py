@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .coordinator import ACTIVE, Coordinator
 from .db import Database, now, profile_path, row, rows
+from .post_url import normalize_post_url
 from .visual_auth import COOKIE, VisualAuth
 from .visual_sessions import VisualSessionError, VisualSessions
 from .settings import ensure_private_dir
@@ -65,7 +66,7 @@ class DrawIn(BaseModel):
                 or parsed.username or parsed.password or parsed.port
                 or not re.fullmatch(r'/(p|reel)/[A-Za-z0-9_-]+/?', parsed.path)):
             raise ValueError('Usa una URL HTTPS de publicacion o reel de Instagram')
-        return value
+        return normalize_post_url(value)
 
     @field_validator('name')
     @classmethod

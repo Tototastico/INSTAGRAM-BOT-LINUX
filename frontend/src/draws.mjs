@@ -42,3 +42,7 @@ export function sortDraws(draws, order) {
     return (order === 'date_asc' ? first - second : second - first) || b.id - a.id
   })
 }
+
+export function assignmentDraws(draws, now = new Date()) {
+  return sortDraws(draws.filter(draw => drawState(draw, now) === 'active'), 'date_asc')
+}

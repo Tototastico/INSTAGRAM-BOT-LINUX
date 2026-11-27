@@ -256,6 +256,19 @@ def test_task_events_remain_available_after_other_activity(tmp_path):
         assert task['last_error'].startswith('StaleElementReferenceException')
 
 
+def test_reel_draw_is_saved_as_post_without_losing_query(tmp_path):
+    app = make_app(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
+    with TestClient(app) as client:
+        response = client.post('/api/draws', json={
+            'name': 'Reel',
+            'url': 'https://www.instagram.com/reel/Df-UfNth8d6/?jplx=cXkzaGhlOWNtdmJk',
+        })
+        assert response.status_code == 201
+        expected = 'https://www.instagram.com/p/Df-UfNth8d6/?jplx=cXkzaGhlOWNtdmJk'
+        assert response.json()['url'] == expected
+        assert client.get('/api/draws').json()[0]['url'] == expected
+
+
 def test_crud_and_archive(tmp_path):
     app = make_app(tmp_path / 'bot.sqlite3', tmp_path / 'missing.json')
     with TestClient(app) as client:
